@@ -5,7 +5,6 @@ import json
 import os
 import sys
 import time
-import urllib.parse
 import requests
 from pathlib import Path
 from datetime import datetime, timezone
@@ -218,8 +217,30 @@ class SmokeBallClient:
     def get_contact(self, contact_id):
         return self.get(f"/contacts/{contact_id}")
 
-    def create_contact(self, **fields):
-        return self.post("/contacts", fields)
+    def create_contact(self, contact_type: str = "person", first_name: str = "",
+                       last_name: str = "", company_name: str = "",
+                       email: str = "", phone: str = ""):
+        if contact_type.lower() == "company":
+            inner = {}
+            if company_name:
+                inner["name"] = company_name
+            if email:
+                inner["email"] = email
+            if phone:
+                inner["phone"] = phone
+            body = {"company": inner}
+        else:
+            inner = {}
+            if first_name:
+                inner["firstName"] = first_name
+            if last_name:
+                inner["lastName"] = last_name
+            if email:
+                inner["email"] = email
+            if phone:
+                inner["phone"] = phone
+            body = {"person": inner}
+        return self.post("/contacts", body)
 
     def update_contact(self, contact_id, **fields):
         return self.put(f"/contacts/{contact_id}", fields)
@@ -246,11 +267,10 @@ class SmokeBallClient:
         return self.get(f"/contacts/{contact_id}/tags")
 
     def add_contact_tags(self, contact_id, tags: list):
-        return self.post(f"/contacts/{contact_id}/tags", {"tags": tags})
+        return self.post(f"/contacts/{contact_id}/tags", tags)
 
-    def remove_contact_tags(self, contact_id, tags: list):
-        tags_encoded = ",".join(urllib.parse.quote(t, safe="") for t in tags)
-        return self.delete(f"/contacts/{contact_id}/tags?tags={tags_encoded}")
+    def remove_contact_tags(self, contact_id, tag_id: str):
+        return self.delete(f"/contacts/{contact_id}/tags/{tag_id}")
 
     # ── Matters ───────────────────────────────────────────────────────────────
 
@@ -260,8 +280,21 @@ class SmokeBallClient:
     def get_matter(self, matter_id):
         return self.get(f"/matters/{matter_id}")
 
-    def create_matter(self, **fields):
-        return self.post("/matters", fields)
+    def create_matter(self, number: str = "", matter_type_id: str = "",
+                      client_ids: list = None, description: str = "",
+                      status: str = ""):
+        body = {}
+        if number:
+            body["number"] = number
+        if matter_type_id:
+            body["matterTypeId"] = matter_type_id
+        if client_ids:
+            body["clientIds"] = client_ids
+        if description:
+            body["description"] = description
+        if status:
+            body["status"] = status
+        return self.post("/matters", body)
 
     def update_matter(self, matter_id, **fields):
         return self.put(f"/matters/{matter_id}", fields)
@@ -282,11 +315,10 @@ class SmokeBallClient:
         return self.get(f"/matters/{matter_id}/tags")
 
     def add_matter_tags(self, matter_id, tags: list):
-        return self.post(f"/matters/{matter_id}/tags", {"tags": tags})
+        return self.post(f"/matters/{matter_id}/tags", tags)
 
-    def remove_matter_tags(self, matter_id, tags: list):
-        tags_encoded = ",".join(urllib.parse.quote(t, safe="") for t in tags)
-        return self.delete(f"/matters/{matter_id}/tags?tags={tags_encoded}")
+    def remove_matter_tags(self, matter_id, tag_id: str):
+        return self.delete(f"/matters/{matter_id}/tags/{tag_id}")
 
     # ── Leads ─────────────────────────────────────────────────────────────────
 
@@ -296,8 +328,13 @@ class SmokeBallClient:
     def get_lead(self, lead_id):
         return self.get(f"/leads/{lead_id}")
 
-    def create_lead(self, **fields):
-        return self.post("/leads", fields)
+    def create_lead(self, matter_type_id: str = "", client_id: str = ""):
+        body = {"isLead": True}
+        if matter_type_id:
+            body["matterTypeId"] = matter_type_id
+        if client_id:
+            body["clientIds"] = [client_id]
+        return self.post("/matters", body)
 
     def update_lead(self, lead_id, **fields):
         return self.put(f"/leads/{lead_id}", fields)
@@ -679,14 +716,14 @@ class SmokeBallClient:
     def delete_authorization_group(self, group_id):
         return self.delete(f"/authorization/groups/{group_id}")
 
-    def get_authorization_policy(self, policy_id):
-        return self.get(f"/authorization/policies/{policy_id}")
+    def get_authorization_policy(self, reference):
+        return self.get(f"/policies/{reference}")
 
     def create_authorization_policy(self, **fields):
-        return self.post("/authorization/policies", fields)
+        return self.post("/policies", fields)
 
-    def update_authorization_policy(self, policy_id, **fields):
-        return self.put(f"/authorization/policies/{policy_id}", fields)
+    def update_authorization_policy(self, reference, **fields):
+        return self.put(f"/policies/{reference}", fields)
 
     # ── Notifications ─────────────────────────────────────────────────────────
 

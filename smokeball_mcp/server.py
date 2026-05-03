@@ -162,23 +162,19 @@ def get_contact(contact_id: str) -> str:
 
 
 @mcp.tool()
-def create_contact(first_name: str = "", last_name: str = "", company_name: str = "",
-                   email: str = "", phone: str = "", contact_type: str = "") -> str:
-    """Create a contact. contact_type: Person | Company."""
-    fields = {}
-    if first_name:
-        fields["firstName"] = first_name
-    if last_name:
-        fields["lastName"] = last_name
-    if company_name:
-        fields["companyName"] = company_name
-    if email:
-        fields["email"] = email
-    if phone:
-        fields["phone"] = phone
-    if contact_type:
-        fields["contactType"] = contact_type
-    return json.dumps(SmokeBallClient().create_contact(**fields), indent=2)
+def create_contact(contact_type: str = "person", first_name: str = "",
+                   last_name: str = "", company_name: str = "",
+                   email: str = "", phone: str = "") -> str:
+    """Create a contact. contact_type: 'person' (default) or 'company'.
+    For person: supply first_name / last_name. For company: supply company_name."""
+    return json.dumps(SmokeBallClient().create_contact(
+        contact_type=contact_type,
+        first_name=first_name,
+        last_name=last_name,
+        company_name=company_name,
+        email=email,
+        phone=phone,
+    ), indent=2)
 
 
 @mcp.tool()
@@ -253,10 +249,9 @@ def add_contact_tags(contact_id: str, tags_csv: str) -> str:
 
 
 @mcp.tool()
-def remove_contact_tags(contact_id: str, tags_csv: str) -> str:
-    """Remove tags from a contact. tags_csv: comma-separated tag strings to remove."""
-    tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
-    return json.dumps(SmokeBallClient().remove_contact_tags(contact_id, tags), indent=2)
+def remove_contact_tags(contact_id: str, tag_id: str) -> str:
+    """Remove a tag from a contact. tag_id: the ID of the tag to remove."""
+    return json.dumps(SmokeBallClient().remove_contact_tags(contact_id, tag_id), indent=2)
 
 
 # ── Matters ───────────────────────────────────────────────────────────────────
@@ -274,19 +269,20 @@ def get_matter(matter_id: str) -> str:
 
 
 @mcp.tool()
-def create_matter(name: str, matter_type_id: str = "", client_id: str = "",
+def create_matter(matter_type_id: str, client_ids_csv: str, number: str = "",
                   description: str = "", status: str = "") -> str:
-    """Create a matter. matter_type_id: from list_matter_types. client_id: from list_contacts."""
-    fields = {"name": name}
-    if matter_type_id:
-        fields["matterTypeId"] = matter_type_id
-    if client_id:
-        fields["clientId"] = client_id
-    if description:
-        fields["description"] = description
-    if status:
-        fields["status"] = status
-    return json.dumps(SmokeBallClient().create_matter(**fields), indent=2)
+    """Create a matter.
+    matter_type_id: from list_matter_types (required).
+    client_ids_csv: comma-separated contact IDs to set as clients (required).
+    number: optional matter reference number."""
+    client_ids = [c.strip() for c in client_ids_csv.split(",") if c.strip()]
+    return json.dumps(SmokeBallClient().create_matter(
+        number=number,
+        matter_type_id=matter_type_id,
+        client_ids=client_ids,
+        description=description,
+        status=status,
+    ), indent=2)
 
 
 @mcp.tool()
@@ -345,17 +341,18 @@ def get_matter_tags(matter_id: str) -> str:
 
 
 @mcp.tool()
-def add_matter_tags(matter_id: str, tags_csv: str) -> str:
-    """Add tags to a matter. tags_csv: comma-separated tag strings."""
-    tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
+def add_matter_tags(matter_id: str, tags_json: str) -> str:
+    """Add tags to a matter. tags_json: JSON array of tag objects, each with keys:
+    id (str), name (str), color (str), type (str).
+    Example: [{"id": "abc", "name": "Urgent", "color": "red", "type": "custom"}]"""
+    tags = json.loads(tags_json)
     return json.dumps(SmokeBallClient().add_matter_tags(matter_id, tags), indent=2)
 
 
 @mcp.tool()
-def remove_matter_tags(matter_id: str, tags_csv: str) -> str:
-    """Remove tags from a matter. tags_csv: comma-separated tag strings to remove."""
-    tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
-    return json.dumps(SmokeBallClient().remove_matter_tags(matter_id, tags), indent=2)
+def remove_matter_tags(matter_id: str, tag_id: str) -> str:
+    """Remove a tag from a matter. tag_id: the ID of the tag to remove."""
+    return json.dumps(SmokeBallClient().remove_matter_tags(matter_id, tag_id), indent=2)
 
 
 # ── Leads ─────────────────────────────────────────────────────────────────────
@@ -373,19 +370,14 @@ def get_lead(lead_id: str) -> str:
 
 
 @mcp.tool()
-def create_lead(contact_id: str = "", matter_type_id: str = "",
-                referral_source: str = "", notes: str = "") -> str:
-    """Create a lead. contact_id: existing contact to associate."""
-    fields = {}
-    if contact_id:
-        fields["contactId"] = contact_id
-    if matter_type_id:
-        fields["matterTypeId"] = matter_type_id
-    if referral_source:
-        fields["referralSource"] = referral_source
-    if notes:
-        fields["notes"] = notes
-    return json.dumps(SmokeBallClient().create_lead(**fields), indent=2)
+def create_lead(matter_type_id: str = "", client_id: str = "") -> str:
+    """Create a lead (created as a matter with isLead=true via POST /matters).
+    matter_type_id: from list_matter_types.
+    client_id: existing contact ID to associate as client."""
+    return json.dumps(SmokeBallClient().create_lead(
+        matter_type_id=matter_type_id,
+        client_id=client_id,
+    ), indent=2)
 
 
 @mcp.tool()
@@ -1296,9 +1288,9 @@ def delete_authorization_group(group_id: str) -> str:
 
 
 @mcp.tool()
-def get_authorization_policy(policy_id: str) -> str:
-    """Get an authorization policy by ID."""
-    return json.dumps(SmokeBallClient().get_authorization_policy(policy_id), indent=2)
+def get_authorization_policy(reference: str) -> str:
+    """Get an authorization policy by reference."""
+    return json.dumps(SmokeBallClient().get_authorization_policy(reference), indent=2)
 
 
 @mcp.tool()
@@ -1310,7 +1302,7 @@ def create_authorization_policy(name: str, permissions_csv: str) -> str:
 
 
 @mcp.tool()
-def update_authorization_policy(policy_id: str, name: str = "",
+def update_authorization_policy(reference: str, name: str = "",
                                   permissions_csv: str = "") -> str:
     """Update an authorization policy. permissions_csv: comma-separated permission strings."""
     fields = {}
@@ -1318,7 +1310,7 @@ def update_authorization_policy(policy_id: str, name: str = "",
         fields["name"] = name
     if permissions_csv:
         fields["permissions"] = [t.strip() for t in permissions_csv.split(",") if t.strip()]
-    return json.dumps(SmokeBallClient().update_authorization_policy(policy_id, **fields), indent=2)
+    return json.dumps(SmokeBallClient().update_authorization_policy(reference, **fields), indent=2)
 
 
 # ── Notifications ─────────────────────────────────────────────────────────────
