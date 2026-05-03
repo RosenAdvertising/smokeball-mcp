@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+import urllib.parse
 import requests
 from pathlib import Path
 from datetime import datetime, timezone
@@ -120,19 +121,25 @@ class SmokeBallClient:
             return self._request(method, path, params=params, json_body=json_body, retry=False)
 
         if resp.status_code == 429 and _rate_retries < 3:
-            retry_after = int(resp.headers.get("Retry-After", 10))
-            print(f"Rate limited. Waiting {retry_after}s...", file=sys.stderr)
-            time.sleep(retry_after)
+            try:
+                wait = int(resp.headers.get("Retry-After", 10))
+            except (ValueError, TypeError):
+                wait = 10
+            print(f"Rate limited. Waiting {wait}s...", file=sys.stderr)
+            time.sleep(wait)
             return self._request(method, path, params=params, json_body=json_body,
                                   retry=retry, _rate_retries=_rate_retries + 1)
 
         if resp.status_code == 204:
-            return {"success": True}
+            return {}
 
         if not resp.ok:
             raise RuntimeError(f"Smokeball API error {resp.status_code}: {resp.text[:400]}")
 
-        return resp.json()
+        try:
+            return resp.json()
+        except Exception:
+            return {"raw": resp.text}
 
     def get(self, path, params=None):
         return self._request("GET", path, params=params)
@@ -242,7 +249,8 @@ class SmokeBallClient:
         return self.post(f"/contacts/{contact_id}/tags", {"tags": tags})
 
     def remove_contact_tags(self, contact_id, tags: list):
-        return self.delete(f"/contacts/{contact_id}/tags?tags={','.join(tags)}")
+        tags_encoded = ",".join(urllib.parse.quote(t, safe="") for t in tags)
+        return self.delete(f"/contacts/{contact_id}/tags?tags={tags_encoded}")
 
     # ── Matters ───────────────────────────────────────────────────────────────
 
@@ -277,7 +285,8 @@ class SmokeBallClient:
         return self.post(f"/matters/{matter_id}/tags", {"tags": tags})
 
     def remove_matter_tags(self, matter_id, tags: list):
-        return self.delete(f"/matters/{matter_id}/tags?tags={','.join(tags)}")
+        tags_encoded = ",".join(urllib.parse.quote(t, safe="") for t in tags)
+        return self.delete(f"/matters/{matter_id}/tags?tags={tags_encoded}")
 
     # ── Leads ─────────────────────────────────────────────────────────────────
 

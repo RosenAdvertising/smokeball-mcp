@@ -246,14 +246,16 @@ def get_contact_tags(contact_id: str) -> str:
 
 
 @mcp.tool()
-def add_contact_tags(contact_id: str, tags: list) -> str:
-    """Add tags to a contact. tags: list of tag strings."""
+def add_contact_tags(contact_id: str, tags_csv: str) -> str:
+    """Add tags to a contact. tags_csv: comma-separated tag strings."""
+    tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
     return json.dumps(SmokeBallClient().add_contact_tags(contact_id, tags), indent=2)
 
 
 @mcp.tool()
-def remove_contact_tags(contact_id: str, tags: list) -> str:
-    """Remove tags from a contact. tags: list of tag strings to remove."""
+def remove_contact_tags(contact_id: str, tags_csv: str) -> str:
+    """Remove tags from a contact. tags_csv: comma-separated tag strings to remove."""
+    tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
     return json.dumps(SmokeBallClient().remove_contact_tags(contact_id, tags), indent=2)
 
 
@@ -343,14 +345,16 @@ def get_matter_tags(matter_id: str) -> str:
 
 
 @mcp.tool()
-def add_matter_tags(matter_id: str, tags: list) -> str:
-    """Add tags to a matter. tags: list of tag strings."""
+def add_matter_tags(matter_id: str, tags_csv: str) -> str:
+    """Add tags to a matter. tags_csv: comma-separated tag strings."""
+    tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
     return json.dumps(SmokeBallClient().add_matter_tags(matter_id, tags), indent=2)
 
 
 @mcp.tool()
-def remove_matter_tags(matter_id: str, tags: list) -> str:
-    """Remove tags from a matter. tags: list of tag strings to remove."""
+def remove_matter_tags(matter_id: str, tags_csv: str) -> str:
+    """Remove tags from a matter. tags_csv: comma-separated tag strings to remove."""
+    tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
     return json.dumps(SmokeBallClient().remove_matter_tags(matter_id, tags), indent=2)
 
 
@@ -575,15 +579,15 @@ def create_task(name: str, matter_id: str = "", due_date: str = "",
 
 @mcp.tool()
 def update_task(task_id: str, name: str = "", due_date: str = "",
-                completed: bool = False, notes: str = "") -> str:
-    """Update a task. Set completed=true to mark done."""
+                completed_str: str = "", notes: str = "") -> str:
+    """Update a task. completed_str: 'true' to mark done, 'false' to unmark."""
     fields = {}
     if name:
         fields["name"] = name
     if due_date:
         fields["dueDate"] = due_date
-    if completed:
-        fields["completed"] = True
+    if completed_str.lower() in ("true", "false"):
+        fields["completed"] = completed_str.lower() == "true"
     if notes:
         fields["notes"] = notes
     return json.dumps(SmokeBallClient().update_task(task_id, **fields), indent=2)
@@ -618,13 +622,13 @@ def create_subtask(task_id: str, name: str, due_date: str = "") -> str:
 
 @mcp.tool()
 def update_subtask(task_id: str, subtask_id: str, name: str = "",
-                   completed: bool = False) -> str:
-    """Update a subtask."""
+                   completed_str: str = "") -> str:
+    """Update a subtask. completed_str: 'true' to mark done, 'false' to unmark."""
     fields = {}
     if name:
         fields["name"] = name
-    if completed:
-        fields["completed"] = True
+    if completed_str.lower() in ("true", "false"):
+        fields["completed"] = completed_str.lower() == "true"
     return json.dumps(SmokeBallClient().update_subtask(task_id, subtask_id, **fields), indent=2)
 
 
@@ -820,28 +824,28 @@ def create_fee(matter_id: str, staff_id: str, date: str, duration_minutes: int,
 
 @mcp.tool()
 def update_fee(fee_id: str, description: str = "", duration_minutes: int = 0,
-               billable: bool = None, rate: float = 0.0) -> str:
-    """Update a fee entry."""
+               billable: str = "", rate: float = 0.0) -> str:
+    """Update a fee entry. billable: 'true' or 'false' to set; leave empty to skip."""
     fields = {}
     if description:
         fields["description"] = description
     if duration_minutes:
         fields["durationMinutes"] = duration_minutes
-    if billable is not None:
-        fields["billable"] = billable
+    if billable.lower() in ("true", "false"):
+        fields["billable"] = billable.lower() == "true"
     if rate:
         fields["rate"] = rate
     return json.dumps(SmokeBallClient().update_fee(fee_id, **fields), indent=2)
 
 
 @mcp.tool()
-def patch_fee(fee_id: str, billable: bool = None, billed: bool = None) -> str:
-    """Toggle a fee entry's billable or billed state (PATCH)."""
+def patch_fee(fee_id: str, billable: str = "", billed: str = "") -> str:
+    """Toggle a fee entry's billable or billed state (PATCH). Use 'true' or 'false'."""
     fields = {}
-    if billable is not None:
-        fields["billable"] = billable
-    if billed is not None:
-        fields["billed"] = billed
+    if billable.lower() in ("true", "false"):
+        fields["billable"] = billable.lower() == "true"
+    if billed.lower() in ("true", "false"):
+        fields["billed"] = billed.lower() == "true"
     return json.dumps(SmokeBallClient().patch_fee(fee_id, **fields), indent=2)
 
 
@@ -886,26 +890,26 @@ def create_expense(matter_id: str, date: str, amount: float,
 
 @mcp.tool()
 def update_expense(expense_id: str, description: str = "", amount: float = 0.0,
-                   billable: bool = None) -> str:
-    """Update an expense entry."""
+                   billable: str = "") -> str:
+    """Update an expense entry. billable: 'true' or 'false' to set; leave empty to skip."""
     fields = {}
     if description:
         fields["description"] = description
     if amount:
         fields["amount"] = amount
-    if billable is not None:
-        fields["billable"] = billable
+    if billable.lower() in ("true", "false"):
+        fields["billable"] = billable.lower() == "true"
     return json.dumps(SmokeBallClient().update_expense(expense_id, **fields), indent=2)
 
 
 @mcp.tool()
-def patch_expense(expense_id: str, billable: bool = None, billed: bool = None) -> str:
-    """Toggle an expense entry's billable or billed state (PATCH)."""
+def patch_expense(expense_id: str, billable: str = "", billed: str = "") -> str:
+    """Toggle an expense entry's billable or billed state (PATCH). Use 'true' or 'false'."""
     fields = {}
-    if billable is not None:
-        fields["billable"] = billable
-    if billed is not None:
-        fields["billed"] = billed
+    if billable.lower() in ("true", "false"):
+        fields["billable"] = billable.lower() == "true"
+    if billed.lower() in ("true", "false"):
+        fields["billed"] = billed.lower() == "true"
     return json.dumps(SmokeBallClient().patch_expense(expense_id, **fields), indent=2)
 
 
@@ -1103,8 +1107,9 @@ def add_file_to_matter(matter_id: str, name: str, folder_id: str = "") -> str:
 
 
 @mcp.tool()
-def add_files_to_matter_batch(matter_id: str, files: list) -> str:
-    """Add multiple files to a matter in one request. files: list of {name, folderId} dicts."""
+def add_files_to_matter_batch(matter_id: str, files_csv: str) -> str:
+    """Add multiple files to a matter in one request. files_csv: comma-separated file names."""
+    files = [{"name": t.strip()} for t in files_csv.split(",") if t.strip()]
     return json.dumps(SmokeBallClient().add_files_to_matter(matter_id, files), indent=2)
 
 
@@ -1297,21 +1302,22 @@ def get_authorization_policy(policy_id: str) -> str:
 
 
 @mcp.tool()
-def create_authorization_policy(name: str, permissions: list) -> str:
-    """Create an authorization policy. permissions: list of permission strings."""
+def create_authorization_policy(name: str, permissions_csv: str) -> str:
+    """Create an authorization policy. permissions_csv: comma-separated permission strings."""
+    permissions = [t.strip() for t in permissions_csv.split(",") if t.strip()]
     return json.dumps(SmokeBallClient().create_authorization_policy(
         name=name, permissions=permissions), indent=2)
 
 
 @mcp.tool()
 def update_authorization_policy(policy_id: str, name: str = "",
-                                  permissions: list = None) -> str:
-    """Update an authorization policy."""
+                                  permissions_csv: str = "") -> str:
+    """Update an authorization policy. permissions_csv: comma-separated permission strings."""
     fields = {}
     if name:
         fields["name"] = name
-    if permissions is not None:
-        fields["permissions"] = permissions
+    if permissions_csv:
+        fields["permissions"] = [t.strip() for t in permissions_csv.split(",") if t.strip()]
     return json.dumps(SmokeBallClient().update_authorization_policy(policy_id, **fields), indent=2)
 
 
@@ -1419,12 +1425,12 @@ def create_portal_task(title: str, matter_id: str, contact_id: str = "",
 
 
 @mcp.tool()
-def update_portal_task(task_id: str, completed: bool = False,
+def update_portal_task(task_id: str, completed_str: str = "",
                         title: str = "") -> str:
-    """Update a client portal task status or title."""
+    """Update a client portal task status or title. completed_str: 'true' or 'false'."""
     fields = {}
-    if completed:
-        fields["completed"] = True
+    if completed_str.lower() in ("true", "false"):
+        fields["completed"] = completed_str.lower() == "true"
     if title:
         fields["title"] = title
     return json.dumps(SmokeBallClient().patch_portal_task(task_id, **fields), indent=2)
@@ -1552,13 +1558,13 @@ def create_webhook_subscription(event_type: str, url: str,
 
 @mcp.tool()
 def update_webhook_subscription(subscription_id: str, url: str = "",
-                                  active: bool = None) -> str:
-    """Update a webhook subscription URL or active state."""
+                                  active: str = "") -> str:
+    """Update a webhook subscription URL or active state. active: 'true' or 'false'."""
     fields = {}
     if url:
         fields["url"] = url
-    if active is not None:
-        fields["active"] = active
+    if active.lower() in ("true", "false"):
+        fields["active"] = active.lower() == "true"
     return json.dumps(SmokeBallClient().update_webhook_subscription(
         subscription_id, **fields), indent=2)
 
