@@ -96,7 +96,7 @@ Both are required for every API call. The setup wizard handles both.
 
 ## Tools
 
-Full coverage across all 30 Smokeball API categories — ~115 tools total.
+Full coverage across 30 Smokeball API resource categories — 189 tools total.
 
 ## License
 

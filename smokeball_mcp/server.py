@@ -796,14 +796,15 @@ def get_fee(fee_id: str) -> str:
 @mcp.tool()
 def create_fee(matter_id: str, staff_id: str, date: str, duration_minutes: int,
                description: str = "", activity_code_id: str = "",
-               rate: float = 0.0, billable: bool = True) -> str:
-    """Create a fee (time entry). date: YYYY-MM-DD. duration_minutes: time spent."""
+               rate: float = 0.0, billable: str = "true") -> str:
+    """Create a fee (time entry). date: YYYY-MM-DD. duration_minutes: time spent.
+    billable: 'true' (default) or 'false'."""
     fields = {
         "matterId": matter_id,
         "staffId": staff_id,
         "date": date,
         "durationMinutes": duration_minutes,
-        "billable": billable,
+        "billable": billable.lower() == "true",
     }
     if description:
         fields["description"] = description
@@ -864,14 +865,15 @@ def get_expense(expense_id: str) -> str:
 
 @mcp.tool()
 def create_expense(matter_id: str, date: str, amount: float,
-                   description: str = "", billable: bool = True,
+                   description: str = "", billable: str = "true",
                    activity_code_id: str = "") -> str:
-    """Create an expense entry. date: YYYY-MM-DD. amount: dollar value."""
+    """Create an expense entry. date: YYYY-MM-DD. amount: dollar value.
+    billable: 'true' (default) or 'false'."""
     fields = {
         "matterId": matter_id,
         "date": date,
         "amount": amount,
-        "billable": billable,
+        "billable": billable.lower() == "true",
     }
     if description:
         fields["description"] = description
