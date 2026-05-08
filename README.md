@@ -1,5 +1,9 @@
 # smokeball-mcp
 
+[![PyPI version](https://img.shields.io/pypi/v/smokeball-mcp.svg)](https://pypi.org/project/smokeball-mcp/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 MCP server for [Smokeball](https://smokeball.com) — full API coverage for law firm practice management. Use Smokeball from Claude Desktop with natural language.
 
 ## What you can do
