@@ -54,6 +54,23 @@ TOKEN_URL = f"{AUTH_BASE}/connect/token"
 AUTH_URL = f"{AUTH_BASE}/connect/authorize"
 
 
+def _retry_after_seconds(resp, default=10):
+    try:
+        return int(resp.headers.get("Retry-After", default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _json_response(resp):
+    try:
+        return resp.json()
+    except ValueError:
+        raise RuntimeError(
+            f"Smokeball API returned non-JSON response ({resp.status_code}): "
+            f"{resp.text[:200]}"
+        )
+
+
 class TokenManager:
     def __init__(self):
         self.token_file = CONFIG_DIR / "tokens.json"
@@ -83,6 +100,8 @@ class TokenManager:
     def refresh(self):
         if not self.refresh_token:
             raise RuntimeError("No refresh token. Run: smokeball-mcp-setup")
+        if not CLIENT_ID or not CLIENT_SECRET:
+            raise RuntimeError("SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET are required. Run: smokeball-mcp-setup")
         resp = requests.post(TOKEN_URL, data={
             "client_id": CLIENT_ID,
             "client_secret": CLIENT_SECRET,
@@ -90,7 +109,7 @@ class TokenManager:
             "refresh_token": self.refresh_token,
         })
         if resp.status_code == 200:
-            new_tokens = resp.json()
+            new_tokens = _json_response(resp)
             if "refresh_token" not in new_tokens:
                 new_tokens["refresh_token"] = self.refresh_token
             new_tokens["refreshed_at"] = datetime.now(timezone.utc).isoformat()
@@ -101,7 +120,11 @@ class TokenManager:
 
 class SmokeBallClient:
     def __init__(self):
+        if not API_KEY:
+            raise RuntimeError("SMOKEBALL_API_KEY is required. Run: smokeball-mcp-setup")
         self.tm = TokenManager()
+        if not self.tm.access_token and not self.tm.refresh_token:
+            raise RuntimeError("No Smokeball OAuth tokens found. Run: smokeball-mcp-setup")
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {self.tm.access_token}",
@@ -120,10 +143,7 @@ class SmokeBallClient:
             return self._request(method, path, params=params, json_body=json_body, retry=False)
 
         if resp.status_code == 429 and _rate_retries < 3:
-            try:
-                wait = int(resp.headers.get("Retry-After", 10))
-            except (ValueError, TypeError):
-                wait = 10
+            wait = _retry_after_seconds(resp)
             print(f"Rate limited. Waiting {wait}s...", file=sys.stderr)
             time.sleep(wait)
             return self._request(method, path, params=params, json_body=json_body,
@@ -137,7 +157,7 @@ class SmokeBallClient:
 
         try:
             return resp.json()
-        except Exception:
+        except ValueError:
             return {"raw": resp.text}
 
     def get(self, path, params=None):

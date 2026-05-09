@@ -345,7 +345,12 @@ def add_matter_tags(matter_id: str, tags_json: str) -> str:
     """Add tags to a matter. tags_json: JSON array of tag objects, each with keys:
     id (str), name (str), color (str), type (str).
     Example: [{"id": "abc", "name": "Urgent", "color": "red", "type": "custom"}]"""
-    tags = json.loads(tags_json)
+    try:
+        tags = json.loads(tags_json)
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid tags_json: {e}"})
+    if not isinstance(tags, list):
+        return json.dumps({"error": "tags_json must be a JSON array"})
     return json.dumps(SmokeBallClient().add_matter_tags(matter_id, tags), indent=2)
 
 
