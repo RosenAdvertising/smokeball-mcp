@@ -40,6 +40,7 @@ smokeball-mcp-setup
 ```
 
 This will:
+
 1. Ask for your region (US / AU / UK)
 2. Ask for your Client ID, Client Secret, and API Key
 3. Open the browser for Smokeball authorization
@@ -69,11 +70,11 @@ Restart Claude Desktop. Smokeball tools will appear automatically.
 
 ## Regions
 
-| Region | API Base |
-|--------|----------|
-| US | api.smokeball.com |
-| AU | api.smokeball.com.au |
-| UK | api.smokeball.co.uk |
+| Region | API Base             |
+| ------ | -------------------- |
+| US     | api.smokeball.com    |
+| AU     | api.smokeball.com.au |
+| UK     | api.smokeball.co.uk  |
 
 Region is set during setup and stored in `~/.smokeball-mcp/.env`.
 

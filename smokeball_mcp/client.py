@@ -101,13 +101,18 @@ class TokenManager:
         if not self.refresh_token:
             raise RuntimeError("No refresh token. Run: smokeball-mcp-setup")
         if not CLIENT_ID or not CLIENT_SECRET:
-            raise RuntimeError("SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET are required. Run: smokeball-mcp-setup")
-        resp = requests.post(TOKEN_URL, data={
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "grant_type": "refresh_token",
-            "refresh_token": self.refresh_token,
-        })
+            raise RuntimeError(
+                "SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET are required. Run: smokeball-mcp-setup"
+            )
+        resp = requests.post(
+            TOKEN_URL,
+            data={
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token,
+            },
+        )
         if resp.status_code == 200:
             new_tokens = _json_response(resp)
             if "refresh_token" not in new_tokens:
@@ -121,39 +126,57 @@ class TokenManager:
 class SmokeBallClient:
     def __init__(self):
         if not API_KEY:
-            raise RuntimeError("SMOKEBALL_API_KEY is required. Run: smokeball-mcp-setup")
+            raise RuntimeError(
+                "SMOKEBALL_API_KEY is required. Run: smokeball-mcp-setup"
+            )
         self.tm = TokenManager()
         if not self.tm.access_token and not self.tm.refresh_token:
-            raise RuntimeError("No Smokeball OAuth tokens found. Run: smokeball-mcp-setup")
+            raise RuntimeError(
+                "No Smokeball OAuth tokens found. Run: smokeball-mcp-setup"
+            )
         self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Bearer {self.tm.access_token}",
-            "x-api-key": API_KEY,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "Authorization": f"Bearer {self.tm.access_token}",
+                "x-api-key": API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+        )
 
-    def _request(self, method, path, params=None, json_body=None, retry=True, _rate_retries=0):
+    def _request(
+        self, method, path, params=None, json_body=None, retry=True, _rate_retries=0
+    ):
         url = f"{BASE_URL}/{path.lstrip('/')}"
         resp = self.session.request(method, url, params=params, json=json_body)
 
         if resp.status_code == 401 and retry:
             self.tm.refresh()
             self.session.headers["Authorization"] = f"Bearer {self.tm.access_token}"
-            return self._request(method, path, params=params, json_body=json_body, retry=False)
+            return self._request(
+                method, path, params=params, json_body=json_body, retry=False
+            )
 
         if resp.status_code == 429 and _rate_retries < 3:
             wait = _retry_after_seconds(resp)
             print(f"Rate limited. Waiting {wait}s...", file=sys.stderr)
             time.sleep(wait)
-            return self._request(method, path, params=params, json_body=json_body,
-                                  retry=retry, _rate_retries=_rate_retries + 1)
+            return self._request(
+                method,
+                path,
+                params=params,
+                json_body=json_body,
+                retry=retry,
+                _rate_retries=_rate_retries + 1,
+            )
 
         if resp.status_code == 204:
             return {}
 
         if not resp.ok:
-            raise RuntimeError(f"Smokeball API error {resp.status_code}: {resp.text[:400]}")
+            raise RuntimeError(
+                f"Smokeball API error {resp.status_code}: {resp.text[:400]}"
+            )
 
         try:
             return resp.json()
@@ -237,9 +260,15 @@ class SmokeBallClient:
     def get_contact(self, contact_id):
         return self.get(f"/contacts/{contact_id}")
 
-    def create_contact(self, contact_type: str = "person", first_name: str = "",
-                       last_name: str = "", company_name: str = "",
-                       email: str = "", phone: str = ""):
+    def create_contact(
+        self,
+        contact_type: str = "person",
+        first_name: str = "",
+        last_name: str = "",
+        company_name: str = "",
+        email: str = "",
+        phone: str = "",
+    ):
         if contact_type.lower() == "company":
             inner = {}
             if company_name:
@@ -300,9 +329,14 @@ class SmokeBallClient:
     def get_matter(self, matter_id):
         return self.get(f"/matters/{matter_id}")
 
-    def create_matter(self, number: str = "", matter_type_id: str = "",
-                      client_ids: list = None, description: str = "",
-                      status: str = ""):
+    def create_matter(
+        self,
+        number: str = "",
+        matter_type_id: str = "",
+        client_ids: list = None,
+        description: str = "",
+        status: str = "",
+    ):
         body = {}
         if number:
             body["number"] = number
@@ -422,10 +456,15 @@ class SmokeBallClient:
         return self.post(f"/matters/{matter_id}/roles/{role_id}/relationships", fields)
 
     def update_relationship(self, matter_id, role_id, relationship_id, **fields):
-        return self.put(f"/matters/{matter_id}/roles/{role_id}/relationships/{relationship_id}", fields)
+        return self.put(
+            f"/matters/{matter_id}/roles/{role_id}/relationships/{relationship_id}",
+            fields,
+        )
 
     def remove_relationship_from_role(self, matter_id, role_id, relationship_id):
-        return self.delete(f"/matters/{matter_id}/roles/{role_id}/relationships/{relationship_id}")
+        return self.delete(
+            f"/matters/{matter_id}/roles/{role_id}/relationships/{relationship_id}"
+        )
 
     # ── Tasks ─────────────────────────────────────────────────────────────────
 
@@ -509,7 +548,9 @@ class SmokeBallClient:
     # ── Memos ─────────────────────────────────────────────────────────────────
 
     def get_memos_on_matter(self, matter_id, limit=50, offset=0):
-        return self.get(f"/matters/{matter_id}/memos", {"limit": limit, "offset": offset})
+        return self.get(
+            f"/matters/{matter_id}/memos", {"limit": limit, "offset": offset}
+        )
 
     def get_memo(self, memo_id):
         return self.get(f"/memos/{memo_id}")
@@ -615,8 +656,10 @@ class SmokeBallClient:
         return self.get(f"/bankaccounts/{account_id}/protectedbalance")
 
     def get_transactions(self, account_id, limit=50, offset=0):
-        return self.get(f"/bankaccounts/{account_id}/transactions",
-                        {"limit": limit, "offset": offset})
+        return self.get(
+            f"/bankaccounts/{account_id}/transactions",
+            {"limit": limit, "offset": offset},
+        )
 
     def get_transaction(self, account_id, transaction_id):
         return self.get(f"/bankaccounts/{account_id}/transactions/{transaction_id}")
@@ -636,8 +679,9 @@ class SmokeBallClient:
     # ── Files ─────────────────────────────────────────────────────────────────
 
     def get_files_on_matter(self, matter_id, limit=50, offset=0):
-        return self.get(f"/matters/{matter_id}/files",
-                        {"limit": limit, "offset": offset})
+        return self.get(
+            f"/matters/{matter_id}/files", {"limit": limit, "offset": offset}
+        )
 
     def get_file(self, file_id):
         return self.get(f"/files/{file_id}")
@@ -649,8 +693,9 @@ class SmokeBallClient:
         return self.get(f"/files/{file_id}/uploadurl")
 
     def get_file_history(self, matter_id, limit=50, offset=0):
-        return self.get(f"/matters/{matter_id}/files/history",
-                        {"limit": limit, "offset": offset})
+        return self.get(
+            f"/matters/{matter_id}/files/history", {"limit": limit, "offset": offset}
+        )
 
     def add_file_to_matter(self, matter_id, **fields):
         return self.post(f"/matters/{matter_id}/files", fields)
@@ -685,8 +730,9 @@ class SmokeBallClient:
         return self.get(f"/matters/{matter_id}/folders/{folder_id}/path")
 
     def get_folder_history(self, matter_id, limit=50, offset=0):
-        return self.get(f"/matters/{matter_id}/folders/history",
-                        {"limit": limit, "offset": offset})
+        return self.get(
+            f"/matters/{matter_id}/folders/history", {"limit": limit, "offset": offset}
+        )
 
     def create_folder(self, matter_id, **fields):
         return self.post(f"/matters/{matter_id}/folders", fields)
