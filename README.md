@@ -90,13 +90,13 @@ Both are required for every API call. The setup wizard handles both.
 ## Example usage in Claude
 
 > "List my open matters"
-
+>
 > "Create a task on matter abc-123 due next Friday — prepare hearing brief"
-
+>
 > "Add a fee entry for 2.5 hours on the Johnson matter, description: drafted motion to dismiss"
-
+>
 > "Show me all trust account transactions for the Smith matter"
-
+>
 > "Send a portal message to the client on matter xyz-456 — documents are ready for review"
 
 ## Tools

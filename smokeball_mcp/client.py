@@ -333,7 +333,7 @@ class SmokeBallClient:
         self,
         number: str = "",
         matter_type_id: str = "",
-        client_ids: list = None,
+        client_ids: list | None = None,
         description: str = "",
         status: str = "",
     ):
@@ -383,7 +383,7 @@ class SmokeBallClient:
         return self.get(f"/leads/{lead_id}")
 
     def create_lead(self, matter_type_id: str = "", client_id: str = ""):
-        body = {"isLead": True}
+        body: dict[str, object] = {"isLead": True}
         if matter_type_id:
             body["matterTypeId"] = matter_type_id
         if client_id:

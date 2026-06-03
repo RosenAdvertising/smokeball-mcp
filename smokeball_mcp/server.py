@@ -1151,7 +1151,7 @@ def get_activity_code(code_id: str) -> str:
 @mcp.tool()
 def create_activity_code(code: str, description: str, rate: float = 0.0) -> str:
     """Create a billing activity code."""
-    fields = {"code": code, "description": description}
+    fields: dict[str, object] = {"code": code, "description": description}
     if rate:
         fields["rate"] = rate
     return json.dumps(SmokeBallClient().create_activity_code(**fields), indent=2)
@@ -1460,7 +1460,7 @@ def get_matter_archive(matter_id: str) -> str:
 @mcp.tool()
 def archive_matter(matter_id: str, reason: str = "") -> str:
     """Archive a matter."""
-    fields = {"archived": True}
+    fields: dict[str, object] = {"archived": True}
     if reason:
         fields["reason"] = reason
     return json.dumps(
