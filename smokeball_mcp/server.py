@@ -1893,6 +1893,97 @@ def test_webhook_subscription(subscription_id: str) -> str:
     )
 
 
+# ── Resources ─────────────────────────────────────────────────────────────────
+
+
+@mcp.resource("smokeball://matter_types", mime_type="application/json")
+def matter_types_resource() -> str:
+    """All matter types configured in this Smokeball firm — read-only reference data."""
+    return json.dumps(SmokeBallClient().list_matter_types(), indent=2)
+
+
+@mcp.resource("smokeball://activity_codes", mime_type="application/json")
+def activity_codes_resource() -> str:
+    """All billable activity codes configured in this Smokeball firm — read-only reference data."""
+    return json.dumps(SmokeBallClient().get_activity_codes(), indent=2)
+
+
+@mcp.resource("smokeball://security-notes", mime_type="text/markdown")
+def security_notes_resource() -> str:
+    """Security posture documentation for this Smokeball MCP server."""
+    return """\
+# Smokeball MCP — Security Notes
+
+## Webhook SSRF Protection (SEC-E)
+
+The `create_webhook_subscription` tool validates the `target_url` parameter before
+registering any webhook subscription. The validation enforces:
+
+- **HTTPS-only**: plain HTTP target URLs are rejected.
+- **Blocked destinations**: private RFC-1918 ranges (10.x, 172.16-31.x,
+  192.168.x), loopback (127.x, ::1), link-local (169.254.x), and cloud
+  metadata endpoints (169.254.169.254) are all rejected.
+
+Any call to `create_webhook_subscription` with an invalid target URL will return an
+`{"error": "..."}` response and no webhook will be created. The same validation
+applies to `update_webhook_subscription` when a new `target_url` is supplied.
+
+**Agent guidance**: when registering webhooks, only use publicly routable
+HTTPS URLs as the target. Attempts to route to internal infrastructure will
+be blocked by the server.
+"""
+
+
+# ── Prompts ───────────────────────────────────────────────────────────────────
+
+
+@mcp.prompt()
+def daily_briefing() -> str:
+    """Morning briefing: open matters needing attention, overdue tasks, and unbilled fees."""
+    return """You are a legal assistant. Run a morning briefing using the Smokeball tools:
+
+1. List all active matters (list_matters) — note any recently opened or recently modified
+2. List all open tasks (list_tasks) — flag any overdue (due before today) with ⚠️
+3. List unpaid invoices (list_invoices) — highlight any overdue amounts
+4. List unbilled fees (list_fees) — identify work that has not yet been invoiced
+5. Summarize: what needs attention today, ranked by urgency
+
+Be specific — include matter names, task names, due dates, and amounts. Keep it concise."""
+
+
+@mcp.prompt()
+def intake_triage(matter_id: str) -> str:
+    """Triage a new or recently opened matter: check contacts, billing setup, and key documents."""
+    return f"""Triage matter {matter_id} to ensure it is properly set up:
+
+1. Get the matter detail (get_matter with matter_id={matter_id})
+2. List contacts on the matter (list_matter_contacts or list_contacts) — check that a client contact is assigned
+3. List tasks on the matter (list_tasks with matter_id={matter_id}) — note any missing intake tasks
+4. List fees on the matter (list_fees with matter_id={matter_id}) — confirm billing type and any existing time entries
+5. List documents on the matter (list_matter_documents or list_documents with matter_id={matter_id}) — note required documents not yet uploaded
+
+Output a checklist: ✅ complete, ⚠️ needs attention, ❌ missing. One line per item."""
+
+
+@mcp.prompt()
+def billing_summary(matter_id: str) -> str:
+    """Billing summary for a matter: fees, expenses, invoices, and outstanding balances.
+
+    Note: webhook registrations in this server validate target URLs against SSRF
+    (HTTPS-only; private/loopback/link-local/metadata IPs are blocked).
+    """
+    return f"""Generate a billing summary for matter {matter_id}:
+
+1. List all fees (list_fees with matter_id={matter_id}) — sum total billable time and amounts
+2. List all expenses (list_expenses with matter_id={matter_id}) — sum total disbursements
+3. List all invoices (list_invoices with matter_id={matter_id}) — identify paid vs unpaid
+4. List bank accounts (list_bank_accounts) — note the trust account if funds are held in trust
+
+Output: total unbilled fees, total unbilled expenses, total outstanding invoices,
+and a one-line status (e.g. "Ready to invoice", "Invoice overdue", "Trust funds on hold").
+Flag any discrepancies between fees recorded and invoices issued."""
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
