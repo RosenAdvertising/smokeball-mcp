@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Smokeball API client. OAuth 2.0 auth code flow, x-api-key + Bearer headers, offset pagination."""
 
+import ipaddress
 import json
 import os
 import sys
 import time
+import urllib.parse
 import requests
 from pathlib import Path
 from datetime import datetime, timezone
@@ -27,6 +29,56 @@ REGIONS = {
 
 CONFIG_DIR = Path.home() / ".smokeball-mcp"
 REDIRECT_URI = "http://127.0.0.1:8768/callback"
+
+# Private/reserved address ranges that must not receive webhook payloads (SSRF hygiene).
+_PRIVATE_NETS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def _validate_webhook_url(url: str) -> None:
+    """Raise ValueError if url is not a safe https endpoint for webhook delivery.
+
+    Enforces:
+    - scheme must be https (prevents cleartext delivery)
+    - hostname must not resolve to a private, loopback, or link-local address
+      (prevents SSRF — Smokeball posting matter data to an internal service)
+
+    Note: this is a best-effort syntactic check on the literal hostname.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(
+            f"Webhook url must use https (got '{parsed.scheme}'). "
+            "Plain-http endpoints would receive Smokeball matter data unencrypted."
+        )
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise ValueError("Webhook url must include a hostname.")
+    try:
+        addr = ipaddress.ip_address(hostname)
+        for net in _PRIVATE_NETS:
+            if addr in net:
+                raise ValueError(
+                    f"Webhook url hostname '{hostname}' is a private/loopback/"
+                    "link-local address. Webhooks must target a firm-controlled public endpoint."
+                )
+    except ValueError as exc:
+        if "private" in str(exc) or "loopback" in str(exc) or "link-local" in str(exc):
+            raise
+    _BLOCKED_HOSTS = {"localhost", "local", "internal", "metadata.google.internal"}
+    if hostname.lower() in _BLOCKED_HOSTS or hostname.lower().endswith(".local"):
+        raise ValueError(
+            f"Webhook url hostname '{hostname}' is a reserved/internal hostname. "
+            "Webhooks must target a firm-controlled public endpoint."
+        )
 
 
 def _load_env():
@@ -895,10 +947,13 @@ class SmokeBallClient:
         return self.get(f"/webhooks/subscriptions/{subscription_id}")
 
     def create_webhook_subscription(self, event_type, url, **fields):
+        _validate_webhook_url(url)
         body = {"eventType": event_type, "url": url, **fields}
         return self.post("/webhooks/subscriptions", body)
 
     def update_webhook_subscription(self, subscription_id, **fields):
+        if "url" in fields:
+            _validate_webhook_url(fields["url"])
         return self.put(f"/webhooks/subscriptions/{subscription_id}", fields)
 
     def delete_webhook_subscription(self, subscription_id):
