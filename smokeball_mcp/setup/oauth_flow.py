@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """One-command OAuth setup for smokeball-mcp.
 Opens the browser, captures the callback, exchanges the code, saves tokens.
+
+Credentials (Client ID, Client Secret, API Key, Region) are stored securely via
+the OS keyring (macOS Keychain / Windows Credential Manager / Linux Secret
+Service), falling back to a 0600 ``.env`` file when no keyring backend is
+available or ``SMOKEBALL_MCP_USE_KEYRING=0`` is set.
 """
 
 import json
@@ -12,6 +17,8 @@ from pathlib import Path
 from urllib.parse import urlencode, urlparse, parse_qs
 
 import requests
+
+from smokeball_mcp import credentials
 
 REDIRECT_URI = "http://127.0.0.1:8768/callback"
 CONFIG_DIR = Path.home() / ".smokeball-mcp"
@@ -122,22 +129,24 @@ def main():
 
     tokens = resp.json()
 
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    backend = credentials.set_secret("SMOKEBALL_CLIENT_ID", client_id)
+    credentials.set_secret("SMOKEBALL_CLIENT_SECRET", client_secret)
+    credentials.set_secret("SMOKEBALL_API_KEY", api_key)
+    credentials.set_secret("SMOKEBALL_REGION", region)
 
-    env_file = CONFIG_DIR / ".env"
-    with open(env_file, "w") as f:
-        f.write(f"SMOKEBALL_CLIENT_ID={client_id}\n")
-        f.write(f"SMOKEBALL_CLIENT_SECRET={client_secret}\n")
-        f.write(f"SMOKEBALL_API_KEY={api_key}\n")
-        f.write(f"SMOKEBALL_REGION={region}\n")
-    os.chmod(env_file, 0o600)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     token_file = CONFIG_DIR / "tokens.json"
     with open(token_file, "w") as f:
         json.dump(tokens, f, indent=2)
     os.chmod(token_file, 0o600)
 
-    print(f"\n✓ Credentials saved to {env_file}")
+    if backend == "keyring":
+        print(
+            f"\n✓ Credentials saved to the OS keyring ({credentials.storage_backend()})."
+        )
+    else:
+        print(f"\n✓ Credentials saved to {credentials.ENV_FILE} (0600).")
     print(f"✓ Tokens saved to {token_file}")
     print("\nRun 'smokeball-mcp-verify' to test the connection.")
 

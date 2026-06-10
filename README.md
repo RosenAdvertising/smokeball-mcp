@@ -76,7 +76,30 @@ Restart Claude Desktop. Smokeball tools will appear automatically.
 | AU     | api.smokeball.com.au |
 | UK     | api.smokeball.co.uk  |
 
-Region is set during setup and stored in `~/.smokeball-mcp/.env`.
+Region is set during setup and stored securely (OS keyring or `~/.smokeball-mcp/.env` fallback).
+
+## Credential storage
+
+By default credentials are stored in your operating system's native secret store
+via the cross-platform [`keyring`](https://github.com/jaraco/keyring) library:
+
+| OS      | Backend                                  |
+| ------- | ---------------------------------------- |
+| macOS   | Keychain                                 |
+| Windows | Credential Manager                       |
+| Linux   | Secret Service (GNOME Keyring / KWallet) |
+
+Secrets are saved under the service name `smokeball-mcp`. Nothing is written to
+disk in clear text.
+
+**File fallback.** On a host with no keyring backend (e.g. a headless Linux box
+without Secret Service), or if you set `SMOKEBALL_MCP_USE_KEYRING=0`, credentials
+fall back to a `~/.smokeball-mcp/.env` file with `0600` permissions.
+
+**Read order.** Credentials resolve in the order OS keyring → process environment
+→ `.env` file. So a rotated secret in the keyring always wins, and a
+`SMOKEBALL_CLIENT_ID` / `SMOKEBALL_API_KEY` exported in your shell overrides the
+file fallback without touching the keyring.
 
 ## Authentication
 

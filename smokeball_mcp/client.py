@@ -11,6 +11,8 @@ import requests
 from pathlib import Path
 from datetime import datetime, timezone
 
+from smokeball_mcp import credentials
+
 # Region-specific base URLs
 REGIONS = {
     "us": {
@@ -81,18 +83,15 @@ def _validate_webhook_url(url: str) -> None:
         )
 
 
-def _load_env():
-    env_file = CONFIG_DIR / ".env"
-    if env_file.exists():
-        with open(env_file) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, val = line.split("=", 1)
-                    os.environ.setdefault(key.strip(), val.strip())
-
-
-_load_env()
+# Resolve credentials through the pluggable store (OS keyring -> .env file).
+credentials.load_into_environ(
+    [
+        "SMOKEBALL_CLIENT_ID",
+        "SMOKEBALL_CLIENT_SECRET",
+        "SMOKEBALL_API_KEY",
+        "SMOKEBALL_REGION",
+    ]
+)
 
 CLIENT_ID = os.environ.get("SMOKEBALL_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("SMOKEBALL_CLIENT_SECRET", "")
