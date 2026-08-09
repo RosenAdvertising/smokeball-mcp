@@ -8,17 +8,22 @@ Service), falling back to a 0600 ``.env`` file when no keyring backend is
 available or ``SMOKEBALL_MCP_USE_KEYRING=0`` is set.
 """
 
+import hmac
 import json
+import logging
 import os
+import secrets
 import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
 from smokeball_mcp import credentials
+
+logger = logging.getLogger(__name__)
 
 REDIRECT_URI = "http://127.0.0.1:8768/callback"
 CONFIG_DIR = Path.home() / ".smokeball-mcp"
@@ -39,33 +44,62 @@ REGIONS = {
 }
 
 _auth_code: str | None = None
+_oauth_state: str | None = None
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
+    def _send_page(self, status: int, body: bytes) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; "
+            "form-action 'none'",
+        )
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
-        global _auth_code
+        global _auth_code, _oauth_state
         parsed = urlparse(self.path)
+        if parsed.path != "/callback":
+            logger.warning("oauth_callback_rejected reason=unexpected_path")
+            self._send_page(404, b"<h2>Callback not found.</h2>")
+            return
         params = parse_qs(parsed.query)
-        if "code" in params:
-            _auth_code = params["code"][0]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            self.wfile.write(
-                b"<h2>Authorization complete. You can close this tab.</h2>"
-            )
-        else:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(
-                b"<h2>No code received. Check Smokeball app settings.</h2>"
-            )
+        supplied_state = params.get("state", [""])[0]
+        if (
+            not _oauth_state
+            or not supplied_state
+            or not hmac.compare_digest(supplied_state, _oauth_state)
+        ):
+            logger.warning("oauth_callback_rejected reason=state_mismatch")
+            self._send_page(400, b"<h2>Authorization could not be verified.</h2>")
+            return
+        codes = params.get("code", [])
+        if len(codes) != 1 or not codes[0]:
+            logger.warning("oauth_callback_rejected reason=missing_code")
+            self._send_page(400, b"<h2>No authorization code received.</h2>")
+            return
+        _auth_code = codes[0]
+        _oauth_state = None
+        self._send_page(
+            200, b"<h2>Authorization complete. You can close this tab.</h2>"
+        )
 
     def log_message(self, *args):
         pass
 
 
 def main():
+    global _auth_code, _oauth_state
+    _auth_code = None
+    _oauth_state = secrets.token_urlsafe(32)
+
     print("=== smokeball-mcp OAuth Setup ===\n")
 
     print("Select your Smokeball region:")
@@ -96,12 +130,15 @@ def main():
         "client_id": client_id,
         "redirect_uri": REDIRECT_URI,
         "scope": "openid offline_access",
+        "state": _oauth_state,
     }
     auth_url = f"{authorize_url}?{urlencode(auth_params)}"
 
     print("\nOpening browser for Smokeball authorization...")
-    print(f"If the browser doesn't open, visit:\n{auth_url}\n")
-    webbrowser.open(auth_url)
+    if not webbrowser.open(auth_url):
+        logger.warning("oauth_setup_rejected reason=browser_open_failed")
+        print("Error: Could not open a browser for authorization.")
+        sys.exit(1)
 
     server = HTTPServer(("127.0.0.1", 8768), _CallbackHandler)
     print("Waiting for Smokeball to redirect back (port 8768)...")
@@ -112,22 +149,36 @@ def main():
         sys.exit(1)
 
     print("Exchanging code for tokens...")
-    resp = requests.post(
-        token_url,
-        data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "grant_type": "authorization_code",
-            "code": _auth_code,
-            "redirect_uri": REDIRECT_URI,
-        },
-    )
-
-    if resp.status_code != 200:
-        print(f"Token exchange failed ({resp.status_code}): {resp.text}")
+    try:
+        resp = requests.post(
+            token_url,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "authorization_code",
+                "code": _auth_code,
+                "redirect_uri": REDIRECT_URI,
+            },
+        )
+    except requests.RequestException:
+        logger.warning("oauth_token_exchange_rejected reason=transport_error")
+        print("Token exchange failed (transport error).")
         sys.exit(1)
 
-    tokens = resp.json()
+    if resp.status_code != 200:
+        logger.warning(
+            "oauth_token_exchange_rejected reason=upstream_status status=%s",
+            resp.status_code,
+        )
+        print(f"Token exchange failed ({resp.status_code}).")
+        sys.exit(1)
+
+    try:
+        tokens = resp.json()
+    except ValueError:
+        logger.warning("oauth_token_exchange_rejected reason=non_json")
+        print("Token exchange failed (invalid response).")
+        sys.exit(1)
 
     backend = credentials.set_secret("SMOKEBALL_CLIENT_ID", client_id)
     credentials.set_secret("SMOKEBALL_CLIENT_SECRET", client_secret)

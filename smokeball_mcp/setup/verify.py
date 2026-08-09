@@ -12,16 +12,16 @@ def check_config():
     token_file = CONFIG_DIR / "tokens.json"
 
     if not env_file.exists():
-        print(f"✗ Missing credentials: {env_file}")
+        print("✗ Missing credential configuration.")
         print("  Run: smokeball-mcp-setup")
         return False
 
     if not token_file.exists():
-        print(f"✗ Missing tokens: {token_file}")
+        print("✗ Missing OAuth tokens.")
         print("  Run: smokeball-mcp-setup")
         return False
 
-    print(f"✓ Config found: {CONFIG_DIR}")
+    print("✓ Credential configuration found.")
     return True
 
 
@@ -32,9 +32,8 @@ def check_api():
 
         client = SmokeBallClient()
 
-        firm = client.get_firm()
-        name = firm.get("name") or firm.get("firmName") or "unknown"
-        print(f"✓ Authenticated — firm: {name}")
+        client.get_firm()
+        print("✓ Authenticated to Smokeball.")
 
         matters = client.list_matters(limit=5)
         items = matters.get("value", matters) if isinstance(matters, dict) else matters
@@ -42,8 +41,8 @@ def check_api():
         print(f"✓ Matters accessible: {count} returned (limit 5)")
 
         return True
-    except Exception as e:
-        print(f"✗ API check failed: {e}")
+    except Exception:
+        print("✗ API check failed.")
         return False
 
 

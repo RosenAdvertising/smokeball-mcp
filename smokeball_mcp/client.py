@@ -3,15 +3,18 @@
 
 import ipaddress
 import json
+import logging
 import os
-import sys
 import time
 import urllib.parse
-import requests
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
+
+import requests
 
 from smokeball_mcp import credentials
+
+logger = logging.getLogger(__name__)
 
 # Region-specific base URLs
 REGIONS = {
@@ -45,6 +48,11 @@ _PRIVATE_NETS = [
 ]
 
 
+def _reject_webhook_url(reason: str) -> None:
+    logger.warning("webhook_url_rejected reason=%s", reason)
+    raise ValueError(f"Webhook URL rejected: {reason}")
+
+
 def _validate_webhook_url(url: str) -> None:
     """Raise ValueError if url is not a safe https endpoint for webhook delivery.
 
@@ -57,30 +65,19 @@ def _validate_webhook_url(url: str) -> None:
     """
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https":
-        raise ValueError(
-            f"Webhook url must use https (got '{parsed.scheme}'). "
-            "Plain-http endpoints would receive Smokeball matter data unencrypted."
-        )
+        _reject_webhook_url("invalid_scheme")
     hostname = parsed.hostname or ""
     if not hostname:
-        raise ValueError("Webhook url must include a hostname.")
+        _reject_webhook_url("missing_hostname")
     try:
         addr = ipaddress.ip_address(hostname)
-        for net in _PRIVATE_NETS:
-            if addr in net:
-                raise ValueError(
-                    f"Webhook url hostname '{hostname}' is a private/loopback/"
-                    "link-local address. Webhooks must target a firm-controlled public endpoint."
-                )
-    except ValueError as exc:
-        if "private" in str(exc) or "loopback" in str(exc) or "link-local" in str(exc):
-            raise
+    except ValueError:
+        addr = None
+    if addr is not None and any(addr in net for net in _PRIVATE_NETS):
+        _reject_webhook_url("private_address")
     _BLOCKED_HOSTS = {"localhost", "local", "internal", "metadata.google.internal"}
     if hostname.lower() in _BLOCKED_HOSTS or hostname.lower().endswith(".local"):
-        raise ValueError(
-            f"Webhook url hostname '{hostname}' is a reserved/internal hostname. "
-            "Webhooks must target a firm-controlled public endpoint."
-        )
+        _reject_webhook_url("reserved_hostname")
 
 
 # Resolve credentials through the pluggable store (OS keyring -> .env file).
@@ -116,10 +113,36 @@ def _json_response(resp):
     try:
         return resp.json()
     except ValueError:
-        raise RuntimeError(
-            f"Smokeball API returned non-JSON response ({resp.status_code}): "
-            f"{resp.text[:200]}"
+        logger.warning(
+            "smokeball_response_rejected reason=non_json status=%s",
+            resp.status_code,
         )
+        raise RuntimeError(
+            f"Smokeball API returned non-JSON response ({resp.status_code})"
+        ) from None
+
+
+def _validate_page(limit: int, offset: int) -> None:
+    if not 1 <= limit <= 200:
+        logger.warning("list_request_rejected field=limit reason=out_of_range")
+        raise ValueError("limit must be between 1 and 200")
+    if offset < 0:
+        logger.warning("list_request_rejected field=offset reason=out_of_range")
+        raise ValueError("offset must be non-negative")
+
+
+def _cap_page(result, limit: int):
+    """Defensively enforce the caller's total limit on common vendor list shapes."""
+    if isinstance(result, list):
+        return result[:limit]
+    if isinstance(result, dict):
+        for key in ("value", "items", "data", "results", "Value", "Items"):
+            items = result.get(key)
+            if isinstance(items, list):
+                if len(items) <= limit:
+                    return result
+                return {**result, key: items[:limit]}
+    return result
 
 
 class TokenManager:
@@ -150,20 +173,28 @@ class TokenManager:
 
     def refresh(self):
         if not self.refresh_token:
+            logger.warning("credential_guard_rejected reason=missing_refresh_token")
             raise RuntimeError("No refresh token. Run: smokeball-mcp-setup")
         if not CLIENT_ID or not CLIENT_SECRET:
+            logger.warning(
+                "credential_guard_rejected reason=missing_oauth_client_config"
+            )
             raise RuntimeError(
                 "SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET are required. Run: smokeball-mcp-setup"
             )
-        resp = requests.post(
-            TOKEN_URL,
-            data={
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
-                "grant_type": "refresh_token",
-                "refresh_token": self.refresh_token,
-            },
-        )
+        try:
+            resp = requests.post(
+                TOKEN_URL,
+                data={
+                    "client_id": CLIENT_ID,
+                    "client_secret": CLIENT_SECRET,
+                    "grant_type": "refresh_token",
+                    "refresh_token": self.refresh_token,
+                },
+            )
+        except requests.RequestException:
+            logger.warning("token_refresh_rejected reason=transport_error")
+            raise RuntimeError("Token refresh failed (transport error)") from None
         if resp.status_code == 200:
             new_tokens = _json_response(resp)
             if "refresh_token" not in new_tokens:
@@ -171,17 +202,23 @@ class TokenManager:
             new_tokens["refreshed_at"] = datetime.now(timezone.utc).isoformat()
             self.save(new_tokens)
             return new_tokens
-        raise RuntimeError(f"Token refresh failed ({resp.status_code}): {resp.text}")
+        logger.warning(
+            "token_refresh_rejected reason=upstream_status status=%s",
+            resp.status_code,
+        )
+        raise RuntimeError(f"Token refresh failed ({resp.status_code})")
 
 
 class SmokeBallClient:
     def __init__(self):
         if not API_KEY:
+            logger.warning("credential_guard_rejected reason=missing_api_key")
             raise RuntimeError(
                 "SMOKEBALL_API_KEY is required. Run: smokeball-mcp-setup"
             )
         self.tm = TokenManager()
         if not self.tm.access_token and not self.tm.refresh_token:
+            logger.warning("credential_guard_rejected reason=missing_oauth_tokens")
             raise RuntimeError(
                 "No Smokeball OAuth tokens found. Run: smokeball-mcp-setup"
             )
@@ -199,7 +236,13 @@ class SmokeBallClient:
         self, method, path, params=None, json_body=None, retry=True, _rate_retries=0
     ):
         url = f"{BASE_URL}/{path.lstrip('/')}"
-        resp = self.session.request(method, url, params=params, json=json_body)
+        try:
+            resp = self.session.request(method, url, params=params, json=json_body)
+        except requests.RequestException:
+            logger.warning(
+                "smokeball_request_rejected reason=transport_error method=%s", method
+            )
+            raise RuntimeError("Smokeball API request failed (transport error)") from None
 
         if resp.status_code == 401 and retry:
             self.tm.refresh()
@@ -210,7 +253,9 @@ class SmokeBallClient:
 
         if resp.status_code == 429 and _rate_retries < 3:
             wait = _retry_after_seconds(resp)
-            print(f"Rate limited. Waiting {wait}s...", file=sys.stderr)
+            logger.warning(
+                "smokeball_request_retry reason=rate_limit wait_seconds=%s", wait
+            )
             time.sleep(wait)
             return self._request(
                 method,
@@ -225,14 +270,23 @@ class SmokeBallClient:
             return {}
 
         if not resp.ok:
-            raise RuntimeError(
-                f"Smokeball API error {resp.status_code}: {resp.text[:400]}"
+            logger.warning(
+                "smokeball_request_rejected reason=upstream_status method=%s status=%s",
+                method,
+                resp.status_code,
             )
+            raise RuntimeError(f"Smokeball API error {resp.status_code}")
 
         try:
             return resp.json()
         except ValueError:
-            return {"raw": resp.text}
+            logger.warning(
+                "smokeball_response_rejected reason=non_json status=%s",
+                resp.status_code,
+            )
+            raise RuntimeError(
+                f"Smokeball API returned non-JSON response ({resp.status_code})"
+            ) from None
 
     def get(self, path, params=None):
         return self._request("GET", path, params=params)
@@ -248,6 +302,11 @@ class SmokeBallClient:
 
     def delete(self, path):
         return self._request("DELETE", path)
+
+    def _get_page(self, path, *, limit=50, offset=0, params=None):
+        _validate_page(limit, offset)
+        query = {"limit": limit, "offset": offset, **(params or {})}
+        return _cap_page(self.get(path, query), limit)
 
     # ── Firm ──────────────────────────────────────────────────────────────────
 
@@ -272,10 +331,10 @@ class SmokeBallClient:
     # ── Staff ─────────────────────────────────────────────────────────────────
 
     def search_staff(self, query=None, limit=50, offset=0):
-        params = {"limit": limit, "offset": offset}
+        params = {}
         if query:
             params["query"] = query
-        return self.get("/staff", params)
+        return self._get_page("/staff", limit=limit, offset=offset, params=params)
 
     def get_staff_member(self, staff_id):
         return self.get(f"/staff/{staff_id}")
@@ -306,7 +365,7 @@ class SmokeBallClient:
     # ── Contacts ──────────────────────────────────────────────────────────────
 
     def list_contacts(self, limit=50, offset=0):
-        return self.get("/contacts", {"limit": limit, "offset": offset})
+        return self._get_page("/contacts", limit=limit, offset=offset)
 
     def get_contact(self, contact_id):
         return self.get(f"/contacts/{contact_id}")
@@ -375,7 +434,7 @@ class SmokeBallClient:
     # ── Matters ───────────────────────────────────────────────────────────────
 
     def list_matters(self, limit=50, offset=0):
-        return self.get("/matters", {"limit": limit, "offset": offset})
+        return self._get_page("/matters", limit=limit, offset=offset)
 
     def get_matter(self, matter_id):
         return self.get(f"/matters/{matter_id}")
@@ -428,7 +487,7 @@ class SmokeBallClient:
     # ── Leads ─────────────────────────────────────────────────────────────────
 
     def list_leads(self, limit=50, offset=0):
-        return self.get("/leads", {"limit": limit, "offset": offset})
+        return self._get_page("/leads", limit=limit, offset=offset)
 
     def get_lead(self, lead_id):
         return self.get(f"/leads/{lead_id}")
@@ -453,7 +512,7 @@ class SmokeBallClient:
     # ── Matter Types ──────────────────────────────────────────────────────────
 
     def list_matter_types(self, limit=100, offset=0):
-        return self.get("/mattertypes", {"limit": limit, "offset": offset})
+        return self._get_page("/mattertypes", limit=limit, offset=offset)
 
     def get_matter_type(self, matter_type_id):
         return self.get(f"/mattertypes/{matter_type_id}")
@@ -520,10 +579,10 @@ class SmokeBallClient:
     # ── Tasks ─────────────────────────────────────────────────────────────────
 
     def get_tasks(self, matter_id=None, limit=50, offset=0):
-        params = {"limit": limit, "offset": offset}
+        params = {}
         if matter_id:
             params["matterId"] = matter_id
-        return self.get("/tasks", params)
+        return self._get_page("/tasks", limit=limit, offset=offset, params=params)
 
     def get_task(self, task_id):
         return self.get(f"/tasks/{task_id}")
@@ -567,10 +626,10 @@ class SmokeBallClient:
     # ── Events ────────────────────────────────────────────────────────────────
 
     def get_events(self, matter_id=None, limit=50, offset=0):
-        params = {"limit": limit, "offset": offset}
+        params = {}
         if matter_id:
             params["matterId"] = matter_id
-        return self.get("/events", params)
+        return self._get_page("/events", limit=limit, offset=offset, params=params)
 
     def get_event(self, event_id):
         return self.get(f"/events/{event_id}")
@@ -599,8 +658,8 @@ class SmokeBallClient:
     # ── Memos ─────────────────────────────────────────────────────────────────
 
     def get_memos_on_matter(self, matter_id, limit=50, offset=0):
-        return self.get(
-            f"/matters/{matter_id}/memos", {"limit": limit, "offset": offset}
+        return self._get_page(
+            f"/matters/{matter_id}/memos", limit=limit, offset=offset
         )
 
     def get_memo(self, memo_id):
@@ -618,10 +677,10 @@ class SmokeBallClient:
     # ── Fees ──────────────────────────────────────────────────────────────────
 
     def get_fees(self, matter_id=None, limit=50, offset=0):
-        params = {"limit": limit, "offset": offset}
+        params = {}
         if matter_id:
             params["matterId"] = matter_id
-        return self.get("/fees", params)
+        return self._get_page("/fees", limit=limit, offset=offset, params=params)
 
     def get_fee(self, fee_id):
         return self.get(f"/fees/{fee_id}")
@@ -641,10 +700,10 @@ class SmokeBallClient:
     # ── Expenses ──────────────────────────────────────────────────────────────
 
     def get_expenses(self, matter_id=None, limit=50, offset=0):
-        params = {"limit": limit, "offset": offset}
+        params = {}
         if matter_id:
             params["matterId"] = matter_id
-        return self.get("/expenses", params)
+        return self._get_page("/expenses", limit=limit, offset=offset, params=params)
 
     def get_expense(self, expense_id):
         return self.get(f"/expenses/{expense_id}")
@@ -664,10 +723,10 @@ class SmokeBallClient:
     # ── Invoices ──────────────────────────────────────────────────────────────
 
     def get_invoices(self, matter_id=None, limit=50, offset=0):
-        params = {"limit": limit, "offset": offset}
+        params = {}
         if matter_id:
             params["matterId"] = matter_id
-        return self.get("/invoices", params)
+        return self._get_page("/invoices", limit=limit, offset=offset, params=params)
 
     def get_invoice(self, invoice_id):
         return self.get(f"/invoices/{invoice_id}")
@@ -678,7 +737,7 @@ class SmokeBallClient:
     # ── Activity Codes ────────────────────────────────────────────────────────
 
     def get_activity_codes(self, limit=100, offset=0):
-        return self.get("/activitycodes", {"limit": limit, "offset": offset})
+        return self._get_page("/activitycodes", limit=limit, offset=offset)
 
     def get_activity_code(self, code_id):
         return self.get(f"/activitycodes/{code_id}")
@@ -695,7 +754,7 @@ class SmokeBallClient:
     # ── Bank Accounts ─────────────────────────────────────────────────────────
 
     def get_bank_accounts(self, limit=50, offset=0):
-        return self.get("/bankaccounts", {"limit": limit, "offset": offset})
+        return self._get_page("/bankaccounts", limit=limit, offset=offset)
 
     def get_bank_account(self, account_id):
         return self.get(f"/bankaccounts/{account_id}")
@@ -707,9 +766,10 @@ class SmokeBallClient:
         return self.get(f"/bankaccounts/{account_id}/protectedbalance")
 
     def get_transactions(self, account_id, limit=50, offset=0):
-        return self.get(
+        return self._get_page(
             f"/bankaccounts/{account_id}/transactions",
-            {"limit": limit, "offset": offset},
+            limit=limit,
+            offset=offset,
         )
 
     def get_transaction(self, account_id, transaction_id):
@@ -730,8 +790,8 @@ class SmokeBallClient:
     # ── Files ─────────────────────────────────────────────────────────────────
 
     def get_files_on_matter(self, matter_id, limit=50, offset=0):
-        return self.get(
-            f"/matters/{matter_id}/files", {"limit": limit, "offset": offset}
+        return self._get_page(
+            f"/matters/{matter_id}/files", limit=limit, offset=offset
         )
 
     def get_file(self, file_id):
@@ -744,8 +804,8 @@ class SmokeBallClient:
         return self.get(f"/files/{file_id}/uploadurl")
 
     def get_file_history(self, matter_id, limit=50, offset=0):
-        return self.get(
-            f"/matters/{matter_id}/files/history", {"limit": limit, "offset": offset}
+        return self._get_page(
+            f"/matters/{matter_id}/files/history", limit=limit, offset=offset
         )
 
     def add_file_to_matter(self, matter_id, **fields):
@@ -781,8 +841,8 @@ class SmokeBallClient:
         return self.get(f"/matters/{matter_id}/folders/{folder_id}/path")
 
     def get_folder_history(self, matter_id, limit=50, offset=0):
-        return self.get(
-            f"/matters/{matter_id}/folders/history", {"limit": limit, "offset": offset}
+        return self._get_page(
+            f"/matters/{matter_id}/folders/history", limit=limit, offset=offset
         )
 
     def create_folder(self, matter_id, **fields):
@@ -811,7 +871,7 @@ class SmokeBallClient:
     # ── Referral Types ────────────────────────────────────────────────────────
 
     def get_referral_types(self, limit=100, offset=0):
-        return self.get("/referraltypes", {"limit": limit, "offset": offset})
+        return self._get_page("/referraltypes", limit=limit, offset=offset)
 
     def get_referral_type(self, referral_type_id):
         return self.get(f"/referraltypes/{referral_type_id}")

@@ -1,1 +1,1 @@
-"""Smokeball MCP — FastMCP server for Smokeball practice management."""
+"""Smokeball MCP server for Smokeball practice management."""
