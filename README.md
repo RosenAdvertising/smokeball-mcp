@@ -20,6 +20,7 @@ MCP server for [Smokeball](https://smokeball.com) — full API coverage for law 
 ## Requirements
 
 - Python 3.10+
+- Python MCP SDK >=2.2,<3 (supports MCP protocol revision 2026-07-28)
 - Claude Desktop (or any MCP-compatible client)
 - Smokeball partner credentials (Client ID, Client Secret, API Key)
 
