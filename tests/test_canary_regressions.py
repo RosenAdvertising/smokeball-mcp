@@ -38,9 +38,8 @@ PAGINATED_TOOLS = {
 }
 
 # These established client methods expose finite child/configuration collections
-# without pagination parameters. Vendor documentation is outside this task's
-# allowed network scope, so the migration records them instead of inventing a
-# Smokeball query contract.
+# without pagination parameters. Preserve their existing API shape without
+# assuming that the vendor supports pagination for these collections.
 UNPAGINATED_LIST_TOOL_REASONS = {
     "list_matter_type_categories": "finite reference collection",
     "list_stage_sets": "finite reference collection",
