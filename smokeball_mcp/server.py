@@ -3,25 +3,21 @@
 
 import json
 import logging
-import re
-from functools import wraps
 from typing import Annotated
 
 from mcp.server import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from mcp.server.mcpserver.tools.base import Tool
 from pydantic import Field, ValidationError
 
-from .client import SmokeBallClient
-
-mcp = MCPServer(
-    "smokeball-mcp",
-    version="0.1.0",
-    instructions=(
-        "Full access to Smokeball practice management: matters, contacts, leads, tasks, "
-        "events, fees, expenses, invoices, files, folders, bank accounts, staff, plugins, "
-        "webhooks, portal, and more."
-    ),
+from .client import (
+    ArgumentValidationError,
+    AuthenticationError,
+    MissingCredentialsError,
+    RateLimitError,
+    SmokeBallClient,
+    TransportError,
+    VendorHTTPError,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,26 +26,14 @@ ListLimit = Annotated[int, Field(ge=1, le=200)]
 ListOffset = Annotated[int, Field(ge=0)]
 
 
-_SAFE_HTTP_REASONS = {
-    400: "The request was rejected.",
-    403: "Access is forbidden.",
-    404: "The requested item was not found.",
-    409: "The request conflicts with the current item state.",
-    422: "The request fields were rejected.",
-    500: "The service had an internal error.",
-    502: "The service is temporarily unavailable.",
-    503: "The service is temporarily unavailable.",
-    504: "The service timed out.",
-}
-
-
 def _validation_message(exc: ValidationError, tool: Tool) -> str:
     """Describe invalid argument names and expected shapes without echoing values."""
     errors = exc.errors(include_input=False, include_url=False)
     details = []
     for error in errors:
-        location = ".".join(str(part) for part in error.get("loc", ()))
-        field = location or "arguments"
+        field = (error.get("loc") or ("arguments",))[0]
+        if field not in tool.parameters.get("properties", {}):
+            field = "arguments"
         schema: object = tool.parameters
         for part in error.get("loc", ()):
             if isinstance(schema, dict):
@@ -60,7 +44,7 @@ def _validation_message(exc: ValidationError, tool: Tool) -> str:
             else "valid value"
         )
         if error.get("type") == "missing":
-            expected = "required"
+            expected = f"a required {shape}"
         elif field == "limit":
             expected = "an integer from 1 to 200 (greater than or equal to 1)"
         elif field == "offset":
@@ -75,91 +59,60 @@ def _validation_message(exc: ValidationError, tool: Tool) -> str:
     )
 
 
-def _classify_tool_exception(exc: Exception) -> str:
-    """Map known internal errors to safe, actionable text; mask everything else."""
-    message = str(exc) if isinstance(exc, (RuntimeError, ValueError)) else ""
-    if message == "SMOKEBALL_API_KEY is required. Run: smokeball-mcp-setup":
-        return "Missing credential SMOKEBALL_API_KEY. Run: smokeball-mcp-setup"
-    if message == (
-        "SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET are required. "
-        "Run: smokeball-mcp-setup"
-    ):
-        return "Missing credentials SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET. Run: smokeball-mcp-setup"
-    if message in (
-        "No Smokeball OAuth tokens found. Run: smokeball-mcp-setup",
-        "No refresh token. Run: smokeball-mcp-setup",
-    ):
-        return "Missing OAuth tokens. Run: smokeball-mcp-setup"
-    if (
-        message.startswith("Token refresh failed (")
-        or message == "Smokeball API error 401"
-    ):
+def _classify_tool_exception(exc):
+    if isinstance(exc, MissingCredentialsError):
+        return {
+            "api_key": "Missing credential SMOKEBALL_API_KEY. Run: smokeball-mcp-setup",
+            "oauth_client": "Missing credentials SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET. Run: smokeball-mcp-setup",
+            "oauth_tokens": "Missing OAuth tokens. Run: smokeball-mcp-setup",
+        }.get(str(exc))
+    if isinstance(exc, AuthenticationError):
         return "Smokeball authorization was rejected or expired. Re-authorize with: smokeball-mcp-setup"
-    rate_limit = re.fullmatch(
-        r"Smokeball rate limit exceeded; retry_after_seconds=(\d{1,2})", message
-    )
-    if rate_limit:
-        seconds = min(max(int(rate_limit.group(1)), 1), 60)
-        return (
-            f"Smokeball rate limit exceeded (HTTP 429). Retry after {seconds} seconds."
-        )
-    if "API error 404" in message:
-        return (
-            "The requested item was not found (HTTP 404). Check the ID and try again."
-        )
-    status = re.fullmatch(r"Smokeball API error (\d{3})", message)
-    if status:
-        code = int(status.group(1))
-        reason = _SAFE_HTTP_REASONS.get(code, "The request failed.")
-        return f"Smokeball API request failed (HTTP {code}). {reason}"
-    if message == "limit must be between 1 and 200":
-        return "Invalid argument limit: expected an integer from 1 to 200."
-    if message == "offset must be non-negative":
-        return "Invalid argument offset: expected a non-negative integer."
-    if message == "tags_json is invalid JSON":
-        return "Argument error: tags_json must be a JSON array of tag objects."
-    if message == "tags_json must be a JSON array":
-        return "Argument error: tags_json must be a JSON array of tag objects."
-    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]* must be 'true' or 'false'", message):
-        field = message.split(" must be", 1)[0]
-        if field.isidentifier():
-            return f"Invalid argument {field}: expected 'true' or 'false'."
-    if message.startswith("Webhook URL rejected:"):
-        return "Invalid argument target_url: expected a public HTTPS URL."
-    return "Tool failed unexpectedly. Check the server logs and try again."
+    if isinstance(exc, RateLimitError):
+        return f"Smokeball rate limit exceeded (HTTP 429). Retry after {exc.retry_after} seconds."
+    if isinstance(exc, VendorHTTPError):
+        if exc.status == 404:
+            return "The requested item was not found (HTTP 404). Check the ID and try again."
+        return f"Smokeball API request failed (HTTP {exc.status}). {exc.reason}"
+    if isinstance(exc, ArgumentValidationError):
+        if exc.argument == "tags_json":
+            return "Argument error: tags_json must be a JSON array of tag objects."
+        return f"Invalid argument {exc.argument}: expected {exc.expected}."
+    if isinstance(exc, TransportError):
+        return "Smokeball could not be reached. Check the connection and retry."
+    return None
 
 
-def _install_safe_tool_boundary() -> None:
-    """Wrap registered tools without changing their advertised metadata/schema."""
-    for tool in mcp._tool_manager.list_tools():
-        original_fn = tool.fn
+class SafeMCPServer(MCPServer):
+    """Classify expected failures, including SDK argument validation."""
 
-        @wraps(original_fn)
-        def safe_fn(*args, __fn=original_fn, **kwargs):
-            try:
-                return __fn(*args, **kwargs)
-            except Exception as exc:
-                text = _classify_tool_exception(exc)
-                if text.startswith("Tool failed unexpectedly"):
-                    logger.warning("tool_call_failed reason=unexpected")
-                raise ToolError(text) from None
+    async def call_tool(self, name, arguments, context=None):
+        tool = self._tool_manager.get_tool(name)
+        if tool is None:
+            raise ToolError("Unknown tool. Choose a name from tools/list.")
+        try:
+            return await super().call_tool(name, arguments, context)
+        except ToolError as exc:
+            if not isinstance(exc, UnexpectedToolError) and isinstance(
+                exc.__cause__, ValidationError
+            ):
+                raise ToolError(_validation_message(exc.__cause__, tool)) from None
+            message = _classify_tool_exception(exc.__cause__)
+            if message is None:
+                logger.warning("tool_call_failed reason=unexpected")
+                raise ToolError(f"Error executing tool {tool.name}") from None
+            raise ToolError(f"Error executing tool {tool.name}: {message}") from None
 
-        tool.fn = safe_fn
-        original_run = tool.run
 
-        async def safe_run(
-            arguments, context, convert_result=False, *, __tool=tool, __run=original_run
-        ):
-            try:
-                return await __run(arguments, context, convert_result=convert_result)
-            except ToolError as exc:
-                if isinstance(exc.__cause__, ValidationError):
-                    raise ToolError(
-                        _validation_message(exc.__cause__, __tool)
-                    ) from None
-                raise
-
-        object.__setattr__(tool, "run", safe_run)
+mcp = SafeMCPServer(
+    "smokeball-mcp",
+    version="0.1.0",
+    instructions=(
+        "Full access to Smokeball practice management: matters, contacts, leads, tasks, "
+        "events, fees, expenses, invoices, files, folders, bank accounts, staff, plugins, "
+        "webhooks, portal, and more."
+    ),
+)
 
 
 def _parse_bool(
@@ -175,7 +128,7 @@ def _parse_bool(
             tool,
             field,
         )
-        raise ValueError(f"{field} must be 'true' or 'false'")
+        raise ArgumentValidationError(field, "'true' or 'false'")
     return normalized == "true"
 
 
@@ -581,12 +534,14 @@ def add_matter_tags(matter_id: str, tags_json: str) -> str:
             "tool_input_rejected tool=add_matter_tags field=tags_json "
             "reason=invalid_json"
         )
-        raise ValueError("tags_json is invalid JSON") from None
+        raise ArgumentValidationError(
+            "tags_json", "a JSON array of tag objects"
+        ) from None
     if not isinstance(tags, list):
         logger.warning(
             "tool_input_rejected tool=add_matter_tags field=tags_json reason=not_array"
         )
-        raise ValueError("tags_json must be a JSON array")
+        raise ArgumentValidationError("tags_json", "a JSON array of tag objects")
     return json.dumps(SmokeBallClient().add_matter_tags(matter_id, tags), indent=2)
 
 
@@ -2103,10 +2058,6 @@ def test_webhook_subscription(subscription_id: str) -> str:
     return json.dumps(
         SmokeBallClient().notify_webhook_subscription(subscription_id), indent=2
     )
-
-
-# Install the error boundary after the last tool has been registered.
-_install_safe_tool_boundary()
 
 
 # ── Resources ─────────────────────────────────────────────────────────────────

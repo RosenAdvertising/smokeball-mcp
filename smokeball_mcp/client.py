@@ -16,6 +16,75 @@ from smokeball_mcp import credentials
 
 logger = logging.getLogger(__name__)
 
+
+class MissingCredentialsError(RuntimeError):
+    """An expected missing local credential."""
+
+
+class AuthenticationError(RuntimeError):
+    """The vendor rejected authorization."""
+
+
+class VendorHTTPError(RuntimeError):
+    def __init__(self, status, reason):
+        self.status = status
+        self.reason = reason
+        super().__init__(f"Smokeball API error {status}")
+
+
+class RateLimitError(RuntimeError):
+    def __init__(self, retry_after):
+        self.retry_after = retry_after
+        super().__init__(
+            f"Smokeball rate limit exceeded; retry_after_seconds={retry_after}"
+        )
+
+
+class ArgumentValidationError(ValueError):
+    def __init__(self, argument, expected):
+        self.argument = argument
+        self.expected = expected
+        super().__init__(f"{argument} must be {expected}")
+
+
+class TransportError(RuntimeError):
+    """A connection failure with no request details attached."""
+
+
+_HTTP_REASONS = {
+    400: "The request was rejected.",
+    409: "The request conflicts with the current item state.",
+    422: "The request fields were rejected.",
+    500: "The service had an internal error.",
+    502: "The service is temporarily unavailable.",
+    503: "The service is temporarily unavailable.",
+    504: "The service timed out.",
+}
+_VENDOR_REASONS = {
+    "invalid_request": "The request is invalid.",
+    "validation_error": "Request validation failed.",
+    "invalid_parameter": "A request parameter is invalid.",
+    "conflict": "The request conflicts with the current item state.",
+    "service_unavailable": "The service is temporarily unavailable.",
+}
+
+
+def _vendor_reason(response):
+    fallback = _HTTP_REASONS.get(response.status_code, "The request failed.")
+    try:
+        data = response.json()
+    except ValueError:
+        return fallback
+    if isinstance(data, dict):
+        for source in (data, data.get("error")):
+            if isinstance(source, dict):
+                for key in ("code", "error_code", "error", "message", "detail"):
+                    value = source.get(key)
+                    if isinstance(value, str) and value.lower() in _VENDOR_REASONS:
+                        return _VENDOR_REASONS[value.lower()]
+    return fallback
+
+
 # Region-specific base URLs
 REGIONS = {
     "us": {
@@ -50,7 +119,7 @@ _PRIVATE_NETS = [
 
 def _reject_webhook_url(reason: str) -> None:
     logger.warning("webhook_url_rejected reason=%s", reason)
-    raise ValueError(f"Webhook URL rejected: {reason}")
+    raise ArgumentValidationError("target_url", "a public HTTPS URL")
 
 
 def _validate_webhook_url(url: str) -> None:
@@ -120,18 +189,18 @@ def _json_response(resp):
             "smokeball_response_rejected reason=non_json status=%s",
             resp.status_code,
         )
-        raise RuntimeError(
-            f"Smokeball API returned non-JSON response ({resp.status_code})"
+        raise VendorHTTPError(
+            resp.status_code, "The service returned invalid JSON."
         ) from None
 
 
 def _validate_page(limit: int, offset: int) -> None:
     if not 1 <= limit <= 200:
         logger.warning("list_request_rejected field=limit reason=out_of_range")
-        raise ValueError("limit must be between 1 and 200")
+        raise ArgumentValidationError("limit", "an integer from 1 to 200")
     if offset < 0:
         logger.warning("list_request_rejected field=offset reason=out_of_range")
-        raise ValueError("offset must be non-negative")
+        raise ArgumentValidationError("offset", "a non-negative integer")
 
 
 def _cap_page(result, limit: int):
@@ -177,14 +246,12 @@ class TokenManager:
     def refresh(self):
         if not self.refresh_token:
             logger.warning("credential_guard_rejected reason=missing_refresh_token")
-            raise RuntimeError("No refresh token. Run: smokeball-mcp-setup")
+            raise MissingCredentialsError("oauth_tokens")
         if not CLIENT_ID or not CLIENT_SECRET:
             logger.warning(
                 "credential_guard_rejected reason=missing_oauth_client_config"
             )
-            raise RuntimeError(
-                "SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET are required. Run: smokeball-mcp-setup"
-            )
+            raise MissingCredentialsError("oauth_client")
         try:
             resp = requests.post(
                 TOKEN_URL,
@@ -198,7 +265,7 @@ class TokenManager:
             )
         except requests.RequestException:
             logger.warning("oauth_refresh_rejected reason=transport_error")
-            raise RuntimeError("Token refresh failed (transport error)") from None
+            raise TransportError("token_refresh_transport_error") from None
         if resp.status_code == 200:
             new_tokens = _json_response(resp)
             if "refresh_token" not in new_tokens:
@@ -210,22 +277,22 @@ class TokenManager:
             "oauth_refresh_rejected reason=upstream_status status=%s",
             resp.status_code,
         )
-        raise RuntimeError(f"Token refresh failed ({resp.status_code})")
+        if resp.status_code in (400, 401, 403):
+            raise AuthenticationError("reauthorization_required")
+        if resp.status_code == 429:
+            raise RateLimitError(_retry_after_seconds(resp))
+        raise VendorHTTPError(resp.status_code, _vendor_reason(resp))
 
 
 class SmokeBallClient:
     def __init__(self):
         if not API_KEY:
             logger.warning("credential_guard_rejected reason=missing_api_key")
-            raise RuntimeError(
-                "SMOKEBALL_API_KEY is required. Run: smokeball-mcp-setup"
-            )
+            raise MissingCredentialsError("api_key")
         self.tm = TokenManager()
         if not self.tm.access_token and not self.tm.refresh_token:
             logger.warning("credential_guard_rejected reason=missing_oauth_tokens")
-            raise RuntimeError(
-                "No Smokeball OAuth tokens found. Run: smokeball-mcp-setup"
-            )
+            raise MissingCredentialsError("oauth_tokens")
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -248,9 +315,7 @@ class SmokeBallClient:
             logger.warning(
                 "smokeball_request_rejected reason=transport_error method=%s", method
             )
-            raise RuntimeError(
-                "Smokeball API request failed (transport error)"
-            ) from None
+            raise TransportError("request_transport_error") from None
 
         if resp.status_code == 401 and retry:
             self.tm.refresh()
@@ -277,9 +342,7 @@ class SmokeBallClient:
         if resp.status_code == 429:
             retry_after = _retry_after_seconds(resp)
             logger.warning("smokeball_request_rejected reason=rate_limit status=429")
-            raise RuntimeError(
-                f"Smokeball rate limit exceeded; retry_after_seconds={retry_after}"
-            )
+            raise RateLimitError(retry_after)
 
         if resp.status_code == 204:
             return {}
@@ -290,7 +353,9 @@ class SmokeBallClient:
                 method,
                 resp.status_code,
             )
-            raise RuntimeError(f"Smokeball API error {resp.status_code}")
+            if resp.status_code in (401, 403):
+                raise AuthenticationError("reauthorization_required")
+            raise VendorHTTPError(resp.status_code, _vendor_reason(resp))
 
         try:
             return resp.json()
@@ -299,8 +364,8 @@ class SmokeBallClient:
                 "smokeball_response_rejected reason=non_json status=%s",
                 resp.status_code,
             )
-            raise RuntimeError(
-                f"Smokeball API returned non-JSON response ({resp.status_code})"
+            raise VendorHTTPError(
+                resp.status_code, "The service returned invalid JSON."
             ) from None
 
     def get(self, path, params=None):

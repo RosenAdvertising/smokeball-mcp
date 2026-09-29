@@ -395,6 +395,9 @@ def test_vendor_error_body_and_request_path_do_not_reach_error_or_log(
         ok = False
         headers = {}
 
+        def json(self):
+            return {"message": marker}
+
     instance = object.__new__(client.SmokeBallClient)
     instance.session = client.requests.Session()
     monkeypatch.setattr(
