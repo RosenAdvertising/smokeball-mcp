@@ -1914,7 +1914,9 @@ def get_webhook_subscription(subscription_id: str) -> str:
 
 
 @mcp.tool()
-def create_webhook_subscription(event_type: str, url: str, secret: str = "") -> str:
+def create_webhook_subscription(
+    event_type: str, url: str, secret: str | None = None
+) -> str:
     """Create a webhook subscription. event_type: from list_webhook_event_types."""
     fields = {}
     if secret:

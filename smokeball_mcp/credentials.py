@@ -25,6 +25,7 @@ See https://github.com/jaraco/keyring#configuring for details.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ _USE_KEYRING_FLAG = "SMOKEBALL_MCP_USE_KEYRING"
 # backend is a runtime fact (gated by ``_keyring_enabled()``), not something the
 # type checker can prove — so attribute access on it is intentionally untyped.
 keyring: Any
+logger = logging.getLogger(__name__)
 try:  # pragma: no cover - import guard
     import keyring as _keyring_mod
     from keyring.errors import KeyringError
@@ -160,8 +162,8 @@ def delete_secret(key: str) -> None:
     if _keyring_enabled():
         try:
             keyring.delete_password(SERVICE_NAME, key)
-        except Exception:  # noqa: BLE001 - missing entry is fine
-            pass
+        except KeyringError:
+            logger.debug("credential_delete_fallback reason=keyring_error")
     existing = _read_env_file()
     if key in existing:
         existing.pop(key, None)
