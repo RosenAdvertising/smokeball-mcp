@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import builtins
-import http.client
-import threading
+from io import BytesIO
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+import requests
 from mcp import Client
 
 from smokeball_mcp import client, server
@@ -444,18 +446,27 @@ def test_verify_output_does_not_emit_firm_name_or_exception_text(
 
 
 def _callback_request(path: str) -> tuple[int, dict[str, str], bytes]:
-    http_server = oauth_flow.HTTPServer(("127.0.0.1", 0), oauth_flow._CallbackHandler)
-    thread = threading.Thread(target=http_server.handle_request)
-    thread.start()
-    connection = http.client.HTTPConnection("127.0.0.1", http_server.server_port)
-    connection.request("GET", path)
-    response = connection.getresponse()
-    result = (response.status, dict(response.getheaders()), response.read())
-    connection.close()
-    thread.join(timeout=5)
-    http_server.server_close()
-    assert not thread.is_alive()
-    return result
+    status = {}
+    headers = {}
+
+    class InProcessHandler(oauth_flow._CallbackHandler):
+        def __init__(self):
+            self.path = path
+            self.wfile = BytesIO()
+
+        def send_response(self, code, message=None):
+            status["value"] = code
+
+        def send_header(self, keyword, value):
+            headers[keyword] = value
+
+        def end_headers(self):
+            pass
+
+    handler = InProcessHandler()
+    handler.do_GET()
+    assert isinstance(handler.wfile, BytesIO)
+    return status["value"], headers, handler.wfile.getvalue()
 
 
 def test_oauth_callback_is_state_bound_and_has_restrictive_headers(caplog) -> None:
@@ -502,7 +513,8 @@ def test_oauth_callback_is_state_bound_and_has_restrictive_headers(caplog) -> No
 def test_oauth_setup_binds_state_without_printing_authorization_url(
     monkeypatch, tmp_path, capsys
 ) -> None:
-    inputs = iter(["1", "client-id-marker", "client-secret-marker", "api-key-marker"])
+    inputs = iter(["1", "client-id-marker"])
+    secret_inputs = iter(["client-secret-marker", "api-key-marker"])
     opened_urls = []
     posted = {}
 
@@ -525,6 +537,9 @@ def test_oauth_setup_binds_state_without_printing_authorization_url(
         return Response()
 
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(inputs))
+    monkeypatch.setattr(
+        oauth_flow.getpass, "getpass", lambda _prompt="": next(secret_inputs)
+    )
     monkeypatch.setattr(oauth_flow, "HTTPServer", FakeServer)
     monkeypatch.setattr(
         oauth_flow.webbrowser,
@@ -556,3 +571,141 @@ def test_oauth_setup_binds_state_without_printing_authorization_url(
         opened_urls[0],
     ):
         assert marker not in output
+
+
+def test_setup_missing_credentials_exits_clearly_without_traceback(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": "")
+    monkeypatch.setattr(oauth_flow.getpass, "getpass", lambda _prompt="": "")
+    with pytest.raises(SystemExit) as error:
+        oauth_flow.main()
+    output = capsys.readouterr().out
+    assert error.value.code == 1
+    assert (
+        "SMOKEBALL_CLIENT_ID, SMOKEBALL_CLIENT_SECRET, and SMOKEBALL_API_KEY" in output
+    )
+    assert "Traceback" not in output
+
+
+def test_setup_eof_exits_clearly_without_traceback(monkeypatch, capsys) -> None:
+    def eof(_prompt=""):
+        raise EOFError
+
+    monkeypatch.setattr(builtins, "input", eof)
+    with pytest.raises(SystemExit) as error:
+        oauth_flow.main()
+    output = capsys.readouterr().out
+    assert error.value.code == 1
+    assert "Setup cancelled" in output
+    assert "Traceback" not in output
+
+
+@pytest.mark.parametrize("status", [401, 403, "timeout"])
+def test_setup_bad_key_response_exits_without_traceback(
+    monkeypatch, tmp_path, capsys, status
+) -> None:
+    inputs = iter(["1", "client-id-marker"])
+    secrets = iter(["client-secret-marker", "api-key-marker"])
+
+    class FakeServer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def handle_request(self):
+            oauth_flow._auth_code = "authorization-code-marker"
+
+    class BadKeyResponse:
+        status_code = status
+
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(inputs))
+    monkeypatch.setattr(oauth_flow.getpass, "getpass", lambda _prompt="": next(secrets))
+    monkeypatch.setattr(oauth_flow, "HTTPServer", FakeServer)
+    monkeypatch.setattr(oauth_flow.webbrowser, "open", lambda _url: True)
+
+    def bad_response(*_a, **_k):
+        if status == "timeout":
+            raise requests.Timeout("private-timeout-marker")
+        return BadKeyResponse()
+
+    monkeypatch.setattr(oauth_flow.requests, "post", bad_response)
+    monkeypatch.setattr(oauth_flow, "CONFIG_DIR", tmp_path)
+    with pytest.raises(SystemExit) as error:
+        oauth_flow.main()
+    output = capsys.readouterr().out
+    assert error.value.code == 1
+    if status == 403:
+        assert "access denied: the connected account lacks permission" in output
+    elif status == "timeout":
+        assert "outcome is unknown" in output
+        assert "before retrying setup" in output
+        assert "private-timeout-marker" not in output
+    else:
+        assert "Token exchange failed (401)." in output
+    assert "Traceback" not in output
+    assert "client-secret-marker" not in output
+    assert "api-key-marker" not in output
+
+
+def test_private_token_write_is_atomic_and_mode_0600(tmp_path, monkeypatch):
+    import os
+
+    original_dump = client.credentials.json.dump
+    modes = []
+
+    def checked_dump(value, stream, **kwargs):
+        modes.append(os.fstat(stream.fileno()).st_mode & 0o777)
+        return original_dump(value, stream, **kwargs)
+
+    monkeypatch.setattr(client.credentials.json, "dump", checked_dump)
+    manager = object.__new__(client.TokenManager)
+    manager.token_file = tmp_path / "nested" / "tokens.json"
+    manager.token_file.parent.mkdir()
+    manager.token_file.write_text("{}")
+    manager.token_file.chmod(0o644)
+    manager.save({"access_token": "token-marker"})
+    assert manager.token_file.read_text().find("token-marker") >= 0
+    assert manager.token_file.stat().st_mode & 0o777 == 0o600
+    assert modes == [0o600]
+    assert list(manager.token_file.parent.glob(".tokens.json.*")) == []
+
+
+def test_all_requests_calls_set_a_timeout() -> None:
+    source_files = [
+        Path(client.__file__),
+        Path(oauth_flow.__file__),
+    ]
+    for source_file in source_files:
+        tree = ast.parse(source_file.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            if (
+                isinstance(function, ast.Attribute)
+                and function.attr
+                in {"get", "post", "put", "patch", "delete", "request"}
+                and (
+                    (
+                        isinstance(function.value, ast.Name)
+                        and function.value.id == "requests"
+                    )
+                    or (
+                        isinstance(function.value, ast.Attribute)
+                        and function.value.attr == "session"
+                    )
+                )
+            ):
+                timeout = next(
+                    (
+                        keyword.value
+                        for keyword in node.keywords
+                        if keyword.arg == "timeout"
+                    ),
+                    None,
+                )
+                assert timeout is not None, (
+                    source_file,
+                    node.lineno,
+                )
+                assert isinstance(timeout, ast.Constant) and timeout.value == 30
