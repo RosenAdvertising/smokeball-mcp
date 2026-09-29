@@ -369,6 +369,52 @@ def test_secondary_string_path_id_is_escaped(monkeypatch):
     assert "/relations/../x" not in captured["url"]
 
 
+@pytest.mark.parametrize("status", [302, 307, 308])
+def test_data_redirect_is_not_followed_or_returned_as_success(monkeypatch, status):
+    response = requests.Response()
+    response.status_code = status
+    response.headers["Location"] = "https://redirect.invalid/collect"
+    response._content = b'{"access_token":"redirected-token"}'
+    instance = object.__new__(smokeball_client.SmokeBallClient)
+    instance.session = requests.Session()
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured.update(method=method, url=url, kwargs=kwargs)
+        return response
+
+    monkeypatch.setattr(instance.session, "request", fake_request)
+    with pytest.raises(smokeball_client.VendorHTTPError) as error:
+        instance.get("/firm")
+    assert error.value.status == status
+    assert captured["kwargs"]["allow_redirects"] is False
+    assert captured["kwargs"]["timeout"] == 30
+
+
+@pytest.mark.parametrize("status", [302, 307, 308])
+def test_refresh_token_redirect_is_not_followed_or_accepted(monkeypatch, status):
+    response = requests.Response()
+    response.status_code = status
+    response.headers["Location"] = "https://redirect.invalid/collect"
+    response._content = b'{"access_token":"redirected-token"}'
+    manager = object.__new__(smokeball_client.TokenManager)
+    manager.tokens = {"refresh_token": "dummy-refresh-token"}
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured.update(url=url, kwargs=kwargs)
+        return response
+
+    monkeypatch.setattr(smokeball_client, "CLIENT_ID", "dummy-client")
+    monkeypatch.setattr(smokeball_client, "CLIENT_SECRET", "dummy-secret")
+    monkeypatch.setattr(smokeball_client.requests, "post", fake_post)
+    with pytest.raises(smokeball_client.VendorHTTPError) as error:
+        manager.refresh()
+    assert error.value.status == status
+    assert captured["kwargs"]["allow_redirects"] is False
+    assert captured["kwargs"]["timeout"] == 30
+
+
 def test_resource_read_masks_exception_and_does_not_log(caplog, monkeypatch):
     marker = "https://person@example.invalid/?token=SECRET"
 

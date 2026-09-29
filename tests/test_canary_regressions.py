@@ -532,8 +532,15 @@ def test_oauth_setup_binds_state_without_printing_authorization_url(
         def json():
             return {"access_token": "token-marker"}
 
-    def fake_post(url, data, timeout):
-        posted.update({"url": url, "data": data, "timeout": timeout})
+    def fake_post(url, data, timeout, allow_redirects):
+        posted.update(
+            {
+                "url": url,
+                "data": data,
+                "timeout": timeout,
+                "allow_redirects": allow_redirects,
+            }
+        )
         return Response()
 
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(inputs))
@@ -557,6 +564,7 @@ def test_oauth_setup_binds_state_without_printing_authorization_url(
 
     assert len(opened_urls) == 1
     assert posted["timeout"] == 30
+    assert posted["allow_redirects"] is False
     query = parse_qs(urlsplit(opened_urls[0]).query)
     assert query["state"] == [oauth_flow._oauth_state]
     assert query["client_id"] == ["client-id-marker"]

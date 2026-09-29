@@ -166,6 +166,7 @@ def main():
                 "redirect_uri": REDIRECT_URI,
             },
             timeout=30,
+            allow_redirects=False,
         )
     except requests.RequestException:
         logger.warning("oauth_code_exchange_rejected reason=transport_error")

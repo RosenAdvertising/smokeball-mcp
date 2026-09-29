@@ -299,6 +299,7 @@ class TokenManager:
                     "refresh_token": self.refresh_token,
                 },
                 timeout=30,
+                allow_redirects=False,
             )
         except requests.RequestException:
             logger.warning("oauth_refresh_rejected reason=transport_error")
@@ -355,7 +356,12 @@ class SmokeBallClient:
         url = f"{BASE_URL}/{path.lstrip('/')}"
         try:
             resp = self.session.request(
-                method, url, params=params, json=json_body, timeout=30
+                method,
+                url,
+                params=params,
+                json=json_body,
+                timeout=30,
+                allow_redirects=False,
             )
         except requests.RequestException:
             logger.warning(
@@ -405,7 +411,7 @@ class SmokeBallClient:
         if resp.status_code == 204:
             return {}
 
-        if not resp.ok:
+        if not 200 <= resp.status_code < 300:
             logger.warning(
                 "smokeball_request_rejected reason=upstream_status method=%s status=%s",
                 method,
