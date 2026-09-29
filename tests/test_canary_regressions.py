@@ -233,9 +233,20 @@ def test_matter_tag_rejections_are_logged_without_payload(
     caplog, payload, reason
 ) -> None:
     caplog.set_level("WARNING", logger=server.__name__)
-    result = server.add_matter_tags("matter-marker", payload)
 
-    assert "error" in result
+    async def call_tool():
+        async with Client(server.mcp, cache=None) as mcp_client:
+            return await mcp_client.call_tool(
+                "add_matter_tags",
+                {"matter_id": "matter-marker", "tags_json": payload},
+            )
+
+    result = asyncio.run(call_tool())
+
+    assert result.is_error is True
+    block = result.content[0]
+    assert block.type == "text"
+    assert "error" in block.text
     assert f"reason={reason}" in caplog.text
     assert "person-marker" not in caplog.text
     assert "matter-marker" not in caplog.text

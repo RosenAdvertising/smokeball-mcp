@@ -104,9 +104,12 @@ AUTH_URL = f"{AUTH_BASE}/connect/authorize"
 
 def _retry_after_seconds(resp, default=10):
     try:
-        return int(resp.headers.get("Retry-After", default))
+        seconds = int(resp.headers.get("Retry-After", default))
     except (TypeError, ValueError):
         return default
+    # Retry-After is untrusted input. Bound delays so a hostile or malformed
+    # response cannot stall a tool call indefinitely.
+    return min(max(seconds, 1), 60)
 
 
 def _json_response(resp):
@@ -269,6 +272,13 @@ class SmokeBallClient:
                 json_body=json_body,
                 retry=retry,
                 _rate_retries=_rate_retries + 1,
+            )
+
+        if resp.status_code == 429:
+            retry_after = _retry_after_seconds(resp)
+            logger.warning("smokeball_request_rejected reason=rate_limit status=429")
+            raise RuntimeError(
+                f"Smokeball rate limit exceeded; retry_after_seconds={retry_after}"
             )
 
         if resp.status_code == 204:
