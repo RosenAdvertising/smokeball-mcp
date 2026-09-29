@@ -148,6 +148,11 @@ def test_unknown_messages_are_not_classified_as_known_failures(
     ("status", "body", "expected"),
     [
         (
+            302,
+            {"message": "private@example.invalid"},
+            "Smokeball API request failed (HTTP 302). The request failed.",
+        ),
+        (
             401,
             {"message": "private@example.invalid"},
             "Smokeball authorization was rejected or expired. Re-authorize with: smokeball-mcp-setup",
@@ -432,6 +437,7 @@ def test_resource_read_masks_exception_and_does_not_log(caplog, monkeypatch):
 
 def test_fallback_credentials_are_private_before_writing(tmp_path, monkeypatch):
     import os
+
     from smokeball_mcp import credentials
 
     config = tmp_path / "config"
