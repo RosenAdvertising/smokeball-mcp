@@ -428,3 +428,26 @@ def test_resource_read_masks_exception_and_does_not_log(caplog, monkeypatch):
     assert str(error.value) == "Unable to read the requested Smokeball resource."
     assert marker not in caplog.text
     assert "SECRET" not in str(error.value)
+
+
+def test_fallback_credentials_are_private_before_writing(tmp_path, monkeypatch):
+    import os
+    from smokeball_mcp import credentials
+
+    config = tmp_path / "config"
+    target = config / ".env"
+    monkeypatch.setattr(credentials, "CONFIG_DIR", config)
+    monkeypatch.setattr(credentials, "ENV_FILE", target)
+    original = os.fdopen
+    modes = []
+
+    def checked_open(fd, *args, **kwargs):
+        modes.append(os.fstat(fd).st_mode & 0o777)
+        return original(fd, *args, **kwargs)
+
+    monkeypatch.setattr(os, "fdopen", checked_open)
+    credentials._write_env_file({"TEST_CREDENTIAL": "first-fake-value"})
+    target.chmod(0o644)
+    credentials._write_env_file({"TEST_CREDENTIAL": "replacement-fake-value"})
+    assert modes == [0o600, 0o600]
+    assert target.read_text() == "TEST_CREDENTIAL=replacement-fake-value\n"
