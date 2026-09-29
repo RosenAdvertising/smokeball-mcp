@@ -1914,8 +1914,9 @@ def get_webhook_subscription(subscription_id: str) -> str:
 
 
 @mcp.tool()
-def create_webhook_subscription(
-    event_type: str, url: str, secret: str | None = None
+# An empty default omits the signing secret; it is not a hardcoded credential.
+def create_webhook_subscription(  # nosec B107
+    event_type: str, url: str, secret: str = ""
 ) -> str:
     """Create a webhook subscription. event_type: from list_webhook_event_types."""
     fields = {}
