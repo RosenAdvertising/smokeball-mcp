@@ -106,9 +106,7 @@ def delete_firm_user_mapping(mapping_id: str) -> str:
 
 
 @mcp.tool()
-def search_staff(
-    query: str = "", limit: ListLimit = 50, offset: ListOffset = 0
-) -> str:
+def search_staff(query: str = "", limit: ListLimit = 50, offset: ListOffset = 0) -> str:
     """Search staff members. query: name or email fragment."""
     return json.dumps(
         SmokeBallClient().search_staff(query=query or None, limit=limit, offset=offset),
@@ -450,8 +448,7 @@ def add_matter_tags(matter_id: str, tags_json: str) -> str:
         return json.dumps({"error": f"Invalid tags_json: {e}"})
     if not isinstance(tags, list):
         logger.warning(
-            "tool_input_rejected tool=add_matter_tags field=tags_json "
-            "reason=not_array"
+            "tool_input_rejected tool=add_matter_tags field=tags_json reason=not_array"
         )
         return json.dumps({"error": "tags_json must be a JSON array"})
     return json.dumps(SmokeBallClient().add_matter_tags(matter_id, tags), indent=2)
@@ -743,9 +740,7 @@ def update_task(
         fields["name"] = name
     if due_date:
         fields["dueDate"] = due_date
-    completed = _parse_bool(
-        completed_str, tool="update_task", field="completed_str"
-    )
+    completed = _parse_bool(completed_str, tool="update_task", field="completed_str")
     if completed is not None:
         fields["completed"] = completed
     if notes:
@@ -788,9 +783,7 @@ def update_subtask(
     fields = {}
     if name:
         fields["name"] = name
-    completed = _parse_bool(
-        completed_str, tool="update_subtask", field="completed_str"
-    )
+    completed = _parse_bool(completed_str, tool="update_subtask", field="completed_str")
     if completed is not None:
         fields["completed"] = completed
     return json.dumps(
@@ -1144,9 +1137,7 @@ def update_expense(
         fields["description"] = description
     if amount:
         fields["amount"] = amount
-    billable_value = _parse_bool(
-        billable, tool="update_expense", field="billable"
-    )
+    billable_value = _parse_bool(billable, tool="update_expense", field="billable")
     if billable_value is not None:
         fields["billable"] = billable_value
     return json.dumps(SmokeBallClient().update_expense(expense_id, **fields), indent=2)
@@ -1156,9 +1147,7 @@ def update_expense(
 def patch_expense(expense_id: str, billable: str = "", billed: str = "") -> str:
     """Toggle an expense entry's billable or billed state (PATCH). Use 'true' or 'false'."""
     fields = {}
-    billable_value = _parse_bool(
-        billable, tool="patch_expense", field="billable"
-    )
+    billable_value = _parse_bool(billable, tool="patch_expense", field="billable")
     billed_value = _parse_bool(billed, tool="patch_expense", field="billed")
     if billable_value is not None:
         fields["billable"] = billable_value
