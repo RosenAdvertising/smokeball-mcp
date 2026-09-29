@@ -159,15 +159,16 @@ def main():
                 "code": _auth_code,
                 "redirect_uri": REDIRECT_URI,
             },
+            timeout=30,
         )
     except requests.RequestException:
-        logger.warning("oauth_token_exchange_rejected reason=transport_error")
+        logger.warning("oauth_code_exchange_rejected reason=transport_error")
         print("Token exchange failed (transport error).")
         sys.exit(1)
 
     if resp.status_code != 200:
         logger.warning(
-            "oauth_token_exchange_rejected reason=upstream_status status=%s",
+            "oauth_code_exchange_rejected reason=upstream_status status=%s",
             resp.status_code,
         )
         print(f"Token exchange failed ({resp.status_code}).")
@@ -176,7 +177,7 @@ def main():
     try:
         tokens = resp.json()
     except ValueError:
-        logger.warning("oauth_token_exchange_rejected reason=non_json")
+        logger.warning("oauth_code_exchange_rejected reason=non_json")
         print("Token exchange failed (invalid response).")
         sys.exit(1)
 

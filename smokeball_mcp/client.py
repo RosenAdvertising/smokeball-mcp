@@ -191,9 +191,10 @@ class TokenManager:
                     "grant_type": "refresh_token",
                     "refresh_token": self.refresh_token,
                 },
+                timeout=30,
             )
         except requests.RequestException:
-            logger.warning("token_refresh_rejected reason=transport_error")
+            logger.warning("oauth_refresh_rejected reason=transport_error")
             raise RuntimeError("Token refresh failed (transport error)") from None
         if resp.status_code == 200:
             new_tokens = _json_response(resp)
@@ -203,7 +204,7 @@ class TokenManager:
             self.save(new_tokens)
             return new_tokens
         logger.warning(
-            "token_refresh_rejected reason=upstream_status status=%s",
+            "oauth_refresh_rejected reason=upstream_status status=%s",
             resp.status_code,
         )
         raise RuntimeError(f"Token refresh failed ({resp.status_code})")
@@ -237,12 +238,16 @@ class SmokeBallClient:
     ):
         url = f"{BASE_URL}/{path.lstrip('/')}"
         try:
-            resp = self.session.request(method, url, params=params, json=json_body)
+            resp = self.session.request(
+                method, url, params=params, json=json_body, timeout=30
+            )
         except requests.RequestException:
             logger.warning(
                 "smokeball_request_rejected reason=transport_error method=%s", method
             )
-            raise RuntimeError("Smokeball API request failed (transport error)") from None
+            raise RuntimeError(
+                "Smokeball API request failed (transport error)"
+            ) from None
 
         if resp.status_code == 401 and retry:
             self.tm.refresh()
@@ -658,9 +663,7 @@ class SmokeBallClient:
     # ── Memos ─────────────────────────────────────────────────────────────────
 
     def get_memos_on_matter(self, matter_id, limit=50, offset=0):
-        return self._get_page(
-            f"/matters/{matter_id}/memos", limit=limit, offset=offset
-        )
+        return self._get_page(f"/matters/{matter_id}/memos", limit=limit, offset=offset)
 
     def get_memo(self, memo_id):
         return self.get(f"/memos/{memo_id}")
@@ -790,9 +793,7 @@ class SmokeBallClient:
     # ── Files ─────────────────────────────────────────────────────────────────
 
     def get_files_on_matter(self, matter_id, limit=50, offset=0):
-        return self._get_page(
-            f"/matters/{matter_id}/files", limit=limit, offset=offset
-        )
+        return self._get_page(f"/matters/{matter_id}/files", limit=limit, offset=offset)
 
     def get_file(self, file_id):
         return self.get(f"/files/{file_id}")

@@ -84,23 +84,89 @@ def test_every_list_tool_is_bounded_or_explicitly_classified() -> None:
 @pytest.mark.parametrize(
     ("method", "args", "kwargs", "path", "extra"),
     [
-        ("search_staff", (), {"query": "query-marker"}, "/staff", {"query": "query-marker"}),
+        (
+            "search_staff",
+            (),
+            {"query": "query-marker"},
+            "/staff",
+            {"query": "query-marker"},
+        ),
         ("list_contacts", (), {}, "/contacts", {}),
         ("list_matters", (), {}, "/matters", {}),
         ("list_leads", (), {}, "/leads", {}),
         ("list_matter_types", (), {}, "/mattertypes", {}),
-        ("get_tasks", (), {"matter_id": "matter-marker"}, "/tasks", {"matterId": "matter-marker"}),
-        ("get_events", (), {"matter_id": "matter-marker"}, "/events", {"matterId": "matter-marker"}),
-        ("get_memos_on_matter", ("matter-marker",), {}, "/matters/matter-marker/memos", {}),
-        ("get_fees", (), {"matter_id": "matter-marker"}, "/fees", {"matterId": "matter-marker"}),
-        ("get_expenses", (), {"matter_id": "matter-marker"}, "/expenses", {"matterId": "matter-marker"}),
-        ("get_invoices", (), {"matter_id": "matter-marker"}, "/invoices", {"matterId": "matter-marker"}),
+        (
+            "get_tasks",
+            (),
+            {"matter_id": "matter-marker"},
+            "/tasks",
+            {"matterId": "matter-marker"},
+        ),
+        (
+            "get_events",
+            (),
+            {"matter_id": "matter-marker"},
+            "/events",
+            {"matterId": "matter-marker"},
+        ),
+        (
+            "get_memos_on_matter",
+            ("matter-marker",),
+            {},
+            "/matters/matter-marker/memos",
+            {},
+        ),
+        (
+            "get_fees",
+            (),
+            {"matter_id": "matter-marker"},
+            "/fees",
+            {"matterId": "matter-marker"},
+        ),
+        (
+            "get_expenses",
+            (),
+            {"matter_id": "matter-marker"},
+            "/expenses",
+            {"matterId": "matter-marker"},
+        ),
+        (
+            "get_invoices",
+            (),
+            {"matter_id": "matter-marker"},
+            "/invoices",
+            {"matterId": "matter-marker"},
+        ),
         ("get_activity_codes", (), {}, "/activitycodes", {}),
         ("get_bank_accounts", (), {}, "/bankaccounts", {}),
-        ("get_transactions", ("account-marker",), {}, "/bankaccounts/account-marker/transactions", {}),
-        ("get_files_on_matter", ("matter-marker",), {}, "/matters/matter-marker/files", {}),
-        ("get_file_history", ("matter-marker",), {}, "/matters/matter-marker/files/history", {}),
-        ("get_folder_history", ("matter-marker",), {}, "/matters/matter-marker/folders/history", {}),
+        (
+            "get_transactions",
+            ("account-marker",),
+            {},
+            "/bankaccounts/account-marker/transactions",
+            {},
+        ),
+        (
+            "get_files_on_matter",
+            ("matter-marker",),
+            {},
+            "/matters/matter-marker/files",
+            {},
+        ),
+        (
+            "get_file_history",
+            ("matter-marker",),
+            {},
+            "/matters/matter-marker/files/history",
+            {},
+        ),
+        (
+            "get_folder_history",
+            ("matter-marker",),
+            {},
+            "/matters/matter-marker/folders/history",
+            {},
+        ),
         ("get_referral_types", (), {}, "/referraltypes", {}),
     ],
 )
@@ -163,7 +229,9 @@ def test_webhook_rejections_log_only_fixed_reasons(caplog, url) -> None:
     ("payload", "reason"),
     [("person-marker@example.com", "invalid_json"), ('"person-marker"', "not_array")],
 )
-def test_matter_tag_rejections_are_logged_without_payload(caplog, payload, reason) -> None:
+def test_matter_tag_rejections_are_logged_without_payload(
+    caplog, payload, reason
+) -> None:
     caplog.set_level("WARNING", logger=server.__name__)
     result = server.add_matter_tags("matter-marker", payload)
 
@@ -176,16 +244,56 @@ def test_matter_tag_rejections_are_logged_without_payload(caplog, payload, reaso
 @pytest.mark.parametrize(
     ("tool_name", "invoke"),
     [
-        ("update_task", lambda marker: server.update_task("record-marker", completed_str=marker)),
-        ("update_subtask", lambda marker: server.update_subtask("record-marker", "child-marker", completed_str=marker)),
-        ("create_fee", lambda marker: server.create_fee("matter-marker", "staff-marker", "2026-01-01", 1, billable=marker)),
-        ("update_fee", lambda marker: server.update_fee("record-marker", billable=marker)),
-        ("patch_fee", lambda marker: server.patch_fee("record-marker", billable=marker)),
-        ("create_expense", lambda marker: server.create_expense("matter-marker", "2026-01-01", 1.0, billable=marker)),
-        ("update_expense", lambda marker: server.update_expense("record-marker", billable=marker)),
-        ("patch_expense", lambda marker: server.patch_expense("record-marker", billed=marker)),
-        ("update_portal_task", lambda marker: server.update_portal_task("record-marker", completed_str=marker)),
-        ("update_webhook_subscription", lambda marker: server.update_webhook_subscription("record-marker", active=marker)),
+        (
+            "update_task",
+            lambda marker: server.update_task("record-marker", completed_str=marker),
+        ),
+        (
+            "update_subtask",
+            lambda marker: server.update_subtask(
+                "record-marker", "child-marker", completed_str=marker
+            ),
+        ),
+        (
+            "create_fee",
+            lambda marker: server.create_fee(
+                "matter-marker", "staff-marker", "2026-01-01", 1, billable=marker
+            ),
+        ),
+        (
+            "update_fee",
+            lambda marker: server.update_fee("record-marker", billable=marker),
+        ),
+        (
+            "patch_fee",
+            lambda marker: server.patch_fee("record-marker", billable=marker),
+        ),
+        (
+            "create_expense",
+            lambda marker: server.create_expense(
+                "matter-marker", "2026-01-01", 1.0, billable=marker
+            ),
+        ),
+        (
+            "update_expense",
+            lambda marker: server.update_expense("record-marker", billable=marker),
+        ),
+        (
+            "patch_expense",
+            lambda marker: server.patch_expense("record-marker", billed=marker),
+        ),
+        (
+            "update_portal_task",
+            lambda marker: server.update_portal_task(
+                "record-marker", completed_str=marker
+            ),
+        ),
+        (
+            "update_webhook_subscription",
+            lambda marker: server.update_webhook_subscription(
+                "record-marker", active=marker
+            ),
+        ),
     ],
 )
 def test_boolean_rejections_are_pii_free_and_precede_client_creation(
@@ -276,12 +384,11 @@ def test_vendor_error_body_and_request_path_do_not_reach_error_or_log(
         ok = False
         headers = {}
 
-    class Session:
-        def request(self, *_args, **_kwargs):
-            return Response()
-
     instance = object.__new__(client.SmokeBallClient)
-    instance.session = Session()
+    instance.session = client.requests.Session()
+    monkeypatch.setattr(
+        instance.session, "request", lambda *_args, **_kwargs: Response()
+    )
     caplog.set_level("WARNING", logger=client.__name__)
 
     with pytest.raises(RuntimeError) as exc_info:
@@ -399,8 +506,8 @@ def test_oauth_setup_binds_state_without_printing_authorization_url(
         def json():
             return {"access_token": "token-marker"}
 
-    def fake_post(url, data):
-        posted.update({"url": url, "data": data})
+    def fake_post(url, data, timeout):
+        posted.update({"url": url, "data": data, "timeout": timeout})
         return Response()
 
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(inputs))
@@ -412,12 +519,15 @@ def test_oauth_setup_binds_state_without_printing_authorization_url(
     )
     monkeypatch.setattr(oauth_flow.requests, "post", fake_post)
     monkeypatch.setattr(oauth_flow.credentials, "set_secret", lambda *_args: "keyring")
-    monkeypatch.setattr(oauth_flow.credentials, "storage_backend", lambda: "test-keyring")
+    monkeypatch.setattr(
+        oauth_flow.credentials, "storage_backend", lambda: "test-keyring"
+    )
     monkeypatch.setattr(oauth_flow, "CONFIG_DIR", tmp_path)
 
     oauth_flow.main()
 
     assert len(opened_urls) == 1
+    assert posted["timeout"] == 30
     query = parse_qs(urlsplit(opened_urls[0]).query)
     assert query["state"] == [oauth_flow._oauth_state]
     assert query["client_id"] == ["client-id-marker"]
