@@ -29,6 +29,7 @@ def check_api():
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
         from smokeball_mcp.client import SmokeBallClient
+        from smokeball_mcp.server import _classify_tool_exception
 
         client = SmokeBallClient()
 
@@ -41,7 +42,15 @@ def check_api():
         print(f"✓ Matters accessible: {count} returned (limit 5)")
 
         return True
-    except Exception:
+    except Exception as exc:
+        message = (
+            _classify_tool_exception(exc)
+            if "_classify_tool_exception" in locals()
+            else None
+        )
+        if message:
+            print(f"✗ API check failed: {message}")
+            return False
         print("✗ API check failed.")
         return False
 

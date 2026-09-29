@@ -35,10 +35,14 @@ The tests establish local SDK and protocol behavior with mocks and in-process
 transport. Live Smokeball API behavior, hosted transport, vendor pagination,
 and ordering remain outside this validation scope.
 
-## Open product decision
+## Public error behavior
 
-MCP 2.2.0 masks messages from tool exceptions other than `ToolError` or
-`ResourceError`, returning a generic client error. Retaining that masking
-limits leakage; explicitly safe `ToolError` messages could give clients more
-actionable feedback. Toby should decide which errors, if any, warrant a safe
-public message. Existing exception handling remains unchanged.
+Expected tool failures are returned as MCP errors (`isError=true`) with fixed,
+sanitized messages for missing credentials, rejected authorization, denied
+access, rate limits, HTTP status failures, transport failures, and invalid
+arguments. A timed-out or disconnected non-GET request is reported as having an
+unknown outcome and clients are told to check whether it completed before
+retrying. Unexpected failures use a generic tool error. Resource failures use
+a fixed message and do not include exception details. Error logs contain fixed
+reason codes rather than request URLs, response bodies, credentials, or input
+values.

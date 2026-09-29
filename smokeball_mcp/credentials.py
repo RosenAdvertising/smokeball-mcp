@@ -25,8 +25,10 @@ See https://github.com/jaraco/keyring#configuring for details.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,26 @@ _USE_KEYRING_FLAG = "SMOKEBALL_MCP_USE_KEYRING"
 # type checker can prove — so attribute access on it is intentionally untyped.
 keyring: Any
 logger = logging.getLogger(__name__)
+
+
+def atomic_private_json(path: Path, value: Any) -> None:
+    """Atomically replace a JSON token file with mode 0600 from creation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(value, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_name, path)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+
+
 try:  # pragma: no cover - import guard
     import keyring as _keyring_mod
     from keyring.errors import KeyringError

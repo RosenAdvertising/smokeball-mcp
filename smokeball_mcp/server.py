@@ -6,11 +6,17 @@ import logging
 from typing import Annotated
 
 from mcp.server import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.server.mcpserver.exceptions import (
+    ResourceError,
+    ResourceNotFoundError,
+    ToolError,
+    UnexpectedToolError,
+)
 from mcp.server.mcpserver.tools.base import Tool
 from pydantic import Field, ValidationError
 
 from .client import (
+    AccessDeniedError,
     ArgumentValidationError,
     AuthenticationError,
     MissingCredentialsError,
@@ -62,12 +68,14 @@ def _validation_message(exc: ValidationError, tool: Tool) -> str:
 def _classify_tool_exception(exc):
     if isinstance(exc, MissingCredentialsError):
         return {
-            "api_key": "Missing credential SMOKEBALL_API_KEY. Run: smokeball-mcp-setup",
-            "oauth_client": "Missing credentials SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET. Run: smokeball-mcp-setup",
-            "oauth_tokens": "Missing OAuth tokens. Run: smokeball-mcp-setup",
+            "api_key": "Smokeball credentials are missing. Set SMOKEBALL_CLIENT_ID, SMOKEBALL_CLIENT_SECRET, and SMOKEBALL_API_KEY, then run smokeball-mcp-setup and restart the MCP server.",
+            "oauth_client": "Smokeball credentials are missing. Set SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET, then run smokeball-mcp-setup and restart the MCP server.",
+            "oauth_tokens": "Smokeball OAuth tokens are missing. Set SMOKEBALL_CLIENT_ID, SMOKEBALL_CLIENT_SECRET, and SMOKEBALL_API_KEY, then run smokeball-mcp-setup and restart the MCP server.",
         }.get(str(exc))
     if isinstance(exc, AuthenticationError):
         return "Smokeball authorization was rejected or expired. Re-authorize with: smokeball-mcp-setup"
+    if isinstance(exc, AccessDeniedError):
+        return "Smokeball access denied: the connected account lacks permission for this action (or the authorization expired; re-run smokeball-mcp-setup if so)."
     if isinstance(exc, RateLimitError):
         return f"Smokeball rate limit exceeded (HTTP 429). Retry after {exc.retry_after} seconds."
     if isinstance(exc, VendorHTTPError):
@@ -79,6 +87,8 @@ def _classify_tool_exception(exc):
             return "Argument error: tags_json must be a JSON array of tag objects."
         return f"Invalid argument {exc.argument}: expected {exc.expected}."
     if isinstance(exc, TransportError):
+        if exc.outcome_unknown:
+            return "Smokeball request outcome is unknown. Check whether it completed before retrying."
         return "Smokeball could not be reached. Check the connection and retry."
     return None
 
@@ -102,6 +112,22 @@ class SafeMCPServer(MCPServer):
                 logger.warning("tool_call_failed reason=unexpected")
                 raise ToolError(f"Error executing tool {tool.name}") from None
             raise ToolError(f"Error executing tool {tool.name}: {message}") from None
+
+    async def read_resource(self, uri, context=None):
+        """Suppress SDK resource exception chains and log only fixed reasons."""
+        try:
+            return await super().read_resource(uri, context)
+        except ResourceNotFoundError:
+            raise ResourceNotFoundError("Resource not found.") from None
+        except ResourceError:
+            raise ResourceError(
+                "Unable to read the requested Smokeball resource."
+            ) from None
+        except Exception:
+            logger.warning("resource_read_failed reason=unexpected")
+            raise ResourceError(
+                "Unable to read the requested Smokeball resource."
+            ) from None
 
 
 mcp = SafeMCPServer(

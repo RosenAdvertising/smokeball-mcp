@@ -8,10 +8,9 @@ Service), falling back to a 0600 ``.env`` file when no keyring backend is
 available or ``SMOKEBALL_MCP_USE_KEYRING=0`` is set.
 """
 
+import getpass
 import hmac
-import json
 import logging
-import os
 import secrets
 import sys
 import webbrowser
@@ -106,7 +105,16 @@ def main():
     print("  1. US (api.smokeball.com)")
     print("  2. AU (api.smokeball.com.au)")
     print("  3. UK (api.smokeball.co.uk)")
-    region_choice = input("\nRegion [1/2/3, default=1]: ").strip() or "1"
+    try:
+        region_choice = input("\nRegion [1/2/3, default=1]: ").strip() or "1"
+        client_id = input("\nSmokeball Client ID: ").strip()
+        client_secret = getpass.getpass("Smokeball Client Secret: ").strip()
+        api_key = getpass.getpass("Smokeball API Key (x-api-key): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print(
+            "Setup cancelled: all three credentials are required. Run smokeball-mcp-setup again."
+        )
+        raise SystemExit(1) from None
     region_map = {"1": "us", "2": "au", "3": "uk"}
     region = region_map.get(region_choice, "us")
     region_cfg = REGIONS[region]
@@ -117,12 +125,10 @@ def main():
 
     print(f"\nUsing region: {region.upper()} ({region_cfg['api']})")
 
-    client_id = input("\nSmokeball Client ID: ").strip()
-    client_secret = input("Smokeball Client Secret: ").strip()
-    api_key = input("Smokeball API Key (x-api-key): ").strip()
-
     if not client_id or not client_secret or not api_key:
-        print("Error: Client ID, Client Secret, and API Key are all required.")
+        print(
+            "Error: SMOKEBALL_CLIENT_ID, SMOKEBALL_CLIENT_SECRET, and SMOKEBALL_API_KEY are all required. Run smokeball-mcp-setup again."
+        )
         sys.exit(1)
 
     auth_params = {
@@ -163,9 +169,17 @@ def main():
         )
     except requests.RequestException:
         logger.warning("oauth_code_exchange_rejected reason=transport_error")
-        print("Token exchange failed (transport error).")
+        print(
+            "Token exchange outcome is unknown. Check whether authorization completed before retrying setup."
+        )
         sys.exit(1)
 
+    if resp.status_code == 403:
+        print(
+            "Smokeball access denied: the connected account lacks permission for this action "
+            "(or the authorization expired; re-run smokeball-mcp-setup if so)."
+        )
+        sys.exit(1)
     if resp.status_code != 200:
         logger.warning(
             "oauth_code_exchange_rejected reason=upstream_status status=%s",
@@ -186,12 +200,8 @@ def main():
     credentials.set_secret("SMOKEBALL_API_KEY", api_key)
     credentials.set_secret("SMOKEBALL_REGION", region)
 
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
     token_file = CONFIG_DIR / "tokens.json"
-    with open(token_file, "w") as f:
-        json.dump(tokens, f, indent=2)
-    os.chmod(token_file, 0o600)
+    credentials.atomic_private_json(token_file, tokens)
 
     if backend == "keyring":
         print(
@@ -200,7 +210,9 @@ def main():
     else:
         print(f"\n✓ Credentials saved to {credentials.ENV_FILE} (0600).")
     print(f"✓ Tokens saved to {token_file}")
-    print("\nRun 'smokeball-mcp-verify' to test the connection.")
+    print(
+        "\nRun 'smokeball-mcp-verify' to test the connection, then restart the MCP server to load the new credentials."
+    )
 
 
 if __name__ == "__main__":

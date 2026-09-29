@@ -28,7 +28,11 @@ def _text(result) -> str:
     [
         (
             smokeball_client.MissingCredentialsError("api_key"),
-            "Error executing tool get_firm: Missing credential SMOKEBALL_API_KEY. Run: smokeball-mcp-setup",
+            "Error executing tool get_firm: Smokeball credentials are missing. Set SMOKEBALL_CLIENT_ID, SMOKEBALL_CLIENT_SECRET, and SMOKEBALL_API_KEY, then run smokeball-mcp-setup and restart the MCP server.",
+        ),
+        (
+            smokeball_client.AccessDeniedError("access_denied"),
+            "Error executing tool get_firm: Smokeball access denied: the connected account lacks permission for this action (or the authorization expired; re-run smokeball-mcp-setup if so).",
         ),
         (
             smokeball_client.AuthenticationError("rejected"),
@@ -88,7 +92,7 @@ def test_argument_validation_is_sanitized_before_tool_execution():
 
 @pytest.mark.parametrize(
     ("header", "expected_wait"),
-    [("12", 12), ("999999999999999999999", 60), ("https://token.invalid", 10)],
+    [("12", 12), ("300", 300), ("nan", 10), ("https://token.invalid", 10)],
 )
 def test_retry_after_is_bounded_and_rejects_untrusted_text(header, expected_wait):
     class Response:
@@ -151,7 +155,7 @@ def test_unknown_messages_are_not_classified_as_known_failures(
         (
             403,
             {"message": "token=FAKE"},
-            "Smokeball authorization was rejected or expired. Re-authorize with: smokeball-mcp-setup",
+            "Smokeball access denied: the connected account lacks permission for this action (or the authorization expired; re-run smokeball-mcp-setup if so).",
         ),
         (
             404,
@@ -240,3 +244,141 @@ def test_missing_argument_names_expected_shape():
     result = asyncio.run(_call("get_matter"))
     assert result.is_error
     assert _text(result) == "Invalid arguments: matter_id must be a required string"
+
+
+@pytest.mark.parametrize(
+    ("method", "failure", "expected"),
+    [
+        (
+            "GET",
+            requests.Timeout("secret marker"),
+            "Smokeball could not be reached. Check the connection and retry.",
+        ),
+        (
+            "GET",
+            requests.ConnectionError("secret marker"),
+            "Smokeball could not be reached. Check the connection and retry.",
+        ),
+        (
+            "PUT",
+            requests.Timeout("secret marker"),
+            "Smokeball request outcome is unknown. Check whether it completed before retrying.",
+        ),
+        (
+            "PUT",
+            requests.ConnectionError("secret marker"),
+            "Smokeball request outcome is unknown. Check whether it completed before retrying.",
+        ),
+    ],
+)
+def test_transport_failures_use_http_method_at_sdk_boundary(
+    monkeypatch, caplog, method, failure, expected
+):
+    instance = object.__new__(smokeball_client.SmokeBallClient)
+    instance.session = requests.Session()
+
+    def fail(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(instance.session, "request", fail)
+    monkeypatch.setattr(server, "SmokeBallClient", lambda: instance)
+    caplog.set_level("WARNING")
+    if method == "GET":
+        result = asyncio.run(_call("get_firm"))
+    else:
+        result = asyncio.run(_call("update_firm", {"name": "safe"}))
+    assert result.is_error is True
+    assert (
+        _text(result)
+        == "Error executing tool "
+        + ("get_firm" if method == "GET" else "update_firm")
+        + ": "
+        + expected
+    )
+    assert "secret marker" not in _text(result)
+    assert "secret marker" not in caplog.text
+
+
+def test_retry_after_over_sixty_seconds_is_preserved_without_sleep(monkeypatch):
+    response = requests.Response()
+    response.status_code = 429
+    response.headers["Retry-After"] = "300"
+    instance = object.__new__(smokeball_client.SmokeBallClient)
+    instance.session = requests.Session()
+    sleeps = []
+    monkeypatch.setattr(instance.session, "request", lambda *_a, **_k: response)
+    monkeypatch.setattr(smokeball_client.time, "sleep", sleeps.append)
+    with pytest.raises(smokeball_client.RateLimitError) as error:
+        instance._request("GET", "/safe")
+    assert error.value.retry_after == 300
+    assert sleeps == []
+
+
+def test_retry_after_cumulative_sleep_never_exceeds_sixty(monkeypatch):
+    responses = []
+    for hint in ("40", "30"):
+        response = requests.Response()
+        response.status_code = 429
+        response.headers["Retry-After"] = hint
+        responses.append(response)
+    instance = object.__new__(smokeball_client.SmokeBallClient)
+    instance.session = requests.Session()
+    monkeypatch.setattr(instance.session, "request", lambda *_a, **_k: responses.pop(0))
+    sleeps = []
+    monkeypatch.setattr(smokeball_client.time, "sleep", sleeps.append)
+    with pytest.raises(smokeball_client.RateLimitError) as error:
+        instance._request("GET", "/safe")
+    assert sleeps == [40]
+    assert sum(sleeps) <= 60
+    assert error.value.retry_after == 30
+
+
+def test_string_id_path_segment_is_escaped(monkeypatch):
+    response = requests.Response()
+    response.status_code = 200
+    response._content = b'{"ok":true}'
+    instance = object.__new__(smokeball_client.SmokeBallClient)
+    instance.session = requests.Session()
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured.update(method=method, url=url, kwargs=kwargs)
+        return response
+
+    monkeypatch.setattr(instance.session, "request", fake_request)
+    instance.get_staff_member("../x")
+    assert captured["url"].endswith("/staff/..%2Fx")
+    assert "/staff/../x" not in captured["url"]
+    assert captured["kwargs"]["timeout"] == 30
+
+
+def test_secondary_string_path_id_is_escaped(monkeypatch):
+    response = requests.Response()
+    response.status_code = 200
+    response._content = b'{"ok":true}'
+    instance = object.__new__(smokeball_client.SmokeBallClient)
+    instance.session = requests.Session()
+    captured = {}
+    monkeypatch.setattr(
+        instance.session,
+        "request",
+        lambda method, url, **kwargs: captured.update(url=url) or response,
+    )
+    instance.get_contact_relation("parent", "../x")
+    assert captured["url"].endswith("/contacts/parent/relations/..%2Fx")
+    assert "/relations/../x" not in captured["url"]
+
+
+def test_resource_read_masks_exception_and_does_not_log(caplog, monkeypatch):
+    marker = "https://person@example.invalid/?token=SECRET"
+
+    def fail():
+        raise RuntimeError(marker)
+
+    monkeypatch.setattr(server, "SmokeBallClient", fail)
+    caplog.set_level("WARNING")
+    with pytest.raises(Exception) as error:
+        asyncio.run(server.mcp.read_resource("smokeball://matter_types"))
+    assert str(error.value) == "Unable to read the requested Smokeball resource."
+    assert marker not in caplog.text
+    assert "SECRET" not in str(error.value)
