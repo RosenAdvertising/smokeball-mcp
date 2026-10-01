@@ -657,14 +657,15 @@ def test_setup_bad_key_response_exits_without_traceback(
 def test_private_token_write_is_atomic_and_mode_0600(tmp_path, monkeypatch):
     import os
 
-    original_dump = client.credentials.json.dump
+    original_fdopen = os.fdopen
     modes = []
 
-    def checked_dump(value, stream, **kwargs):
-        modes.append(os.fstat(stream.fileno()).st_mode & 0o777)
-        return original_dump(value, stream, **kwargs)
+    def checked_fdopen(fd, *args, **kwargs):
+        modes.append(os.fstat(fd).st_mode & 0o777)
+        assert os.fstat(fd).st_size == 0
+        return original_fdopen(fd, *args, **kwargs)
 
-    monkeypatch.setattr(client.credentials.json, "dump", checked_dump)
+    monkeypatch.setattr(os, "fdopen", checked_fdopen)
     manager = object.__new__(client.TokenManager)
     manager.token_file = tmp_path / "nested" / "tokens.json"
     manager.token_file.parent.mkdir()

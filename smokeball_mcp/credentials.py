@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -51,21 +50,8 @@ logger = logging.getLogger(__name__)
 
 
 def atomic_private_json(path: Path, value: Any) -> None:
-    """Atomically replace a JSON token file with mode 0600 from creation."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as stream:
-            json.dump(value, stream, indent=2)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp_name, path)
-    finally:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
+    """Atomically replace a JSON token file using private platform storage."""
+    write_private_file(path, json.dumps(value, indent=2))
 
 
 try:  # pragma: no cover - import guard
@@ -119,10 +105,11 @@ def _read_env_file() -> dict[str, str]:
 def _write_env_file(values: dict[str, str]) -> None:
     """Write the fallback ``.env`` file with 0600 perms in a 0700 dir."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        CONFIG_DIR.chmod(0o700)
-    except OSError:
-        pass
+    if os.name != "nt":
+        try:
+            CONFIG_DIR.chmod(0o700)
+        except OSError:
+            pass
     lines = [f"{k}={v}" for k, v in values.items()]
     write_private_file(ENV_FILE, "\n".join(lines) + ("\n" if lines else ""))
 
