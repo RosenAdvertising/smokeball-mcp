@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -16,6 +17,21 @@ import requests
 from smokeball_mcp import credentials
 
 logger = logging.getLogger(__name__)
+
+
+def _path_id(value, parameter: str) -> str:
+    """Validate a plain identifier before URL quoting or any HTTP request."""
+    expected = (
+        "a non-empty plain identifier (ASCII letters, digits, -, _, ., ~); not . or .."
+    )
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (str, int))
+        or str(value) in {".", ".."}
+        or re.fullmatch(r"[A-Za-z0-9._~-]+", str(value)) is None
+    ):
+        raise ArgumentValidationError(parameter, expected)
+    return urllib.parse.quote(str(value), safe="")
 
 
 class MissingCredentialsError(RuntimeError):
@@ -227,11 +243,6 @@ def _json_response(resp):
         raise VendorHTTPError(
             resp.status_code, "The service returned invalid JSON."
         ) from None
-
-
-def _path_id(value):
-    """Encode one untrusted identifier as a single URL path segment."""
-    return urllib.parse.quote(str(value), safe="")
 
 
 def _validate_page(limit: int, offset: int) -> None:
@@ -466,13 +477,15 @@ class SmokeBallClient:
         return self.get("/firm/usermappings")
 
     def get_firm_user_mapping(self, mapping_id):
-        return self.get(f"/firm/usermappings/{_path_id(mapping_id)}")
+        return self.get(f"/firm/usermappings/{_path_id(mapping_id, 'mapping_id')}")
 
     def update_firm_user_mapping(self, mapping_id, **fields):
-        return self.put(f"/firm/usermappings/{_path_id(mapping_id)}", fields)
+        return self.put(
+            f"/firm/usermappings/{_path_id(mapping_id, 'mapping_id')}", fields
+        )
 
     def delete_firm_user_mapping(self, mapping_id):
-        return self.delete(f"/firm/usermappings/{_path_id(mapping_id)}")
+        return self.delete(f"/firm/usermappings/{_path_id(mapping_id, 'mapping_id')}")
 
     # ── Staff ─────────────────────────────────────────────────────────────────
 
@@ -483,30 +496,30 @@ class SmokeBallClient:
         return self._get_page("/staff", limit=limit, offset=offset, params=params)
 
     def get_staff_member(self, staff_id):
-        return self.get(f"/staff/{_path_id(staff_id)}")
+        return self.get(f"/staff/{_path_id(staff_id, 'staff_id')}")
 
     def create_staff_member(self, **fields):
         return self.post("/staff", fields)
 
     def update_staff_member(self, staff_id, **fields):
-        return self.put(f"/staff/{_path_id(staff_id)}", fields)
+        return self.put(f"/staff/{_path_id(staff_id, 'staff_id')}", fields)
 
     def delete_staff_member(self, staff_id):
-        return self.delete(f"/staff/{_path_id(staff_id)}")
+        return self.delete(f"/staff/{_path_id(staff_id, 'staff_id')}")
 
     # ── Users ─────────────────────────────────────────────────────────────────
 
     def get_user(self, user_id):
-        return self.get(f"/users/{_path_id(user_id)}")
+        return self.get(f"/users/{_path_id(user_id, 'user_id')}")
 
     def create_user(self, **fields):
         return self.post("/users", fields)
 
     def remove_user(self, user_id):
-        return self.delete(f"/users/{_path_id(user_id)}")
+        return self.delete(f"/users/{_path_id(user_id, 'user_id')}")
 
     def resend_user_invitation(self, user_id):
-        return self.post(f"/users/{_path_id(user_id)}/resend-invitation")
+        return self.post(f"/users/{_path_id(user_id, 'user_id')}/resend-invitation")
 
     # ── Contacts ──────────────────────────────────────────────────────────────
 
@@ -514,7 +527,7 @@ class SmokeBallClient:
         return self._get_page("/contacts", limit=limit, offset=offset)
 
     def get_contact(self, contact_id):
-        return self.get(f"/contacts/{_path_id(contact_id)}")
+        return self.get(f"/contacts/{_path_id(contact_id, 'contact_id')}")
 
     def create_contact(
         self,
@@ -548,41 +561,45 @@ class SmokeBallClient:
         return self.post("/contacts", body)
 
     def update_contact(self, contact_id, **fields):
-        return self.put(f"/contacts/{_path_id(contact_id)}", fields)
+        return self.put(f"/contacts/{_path_id(contact_id, 'contact_id')}", fields)
 
     def delete_contact(self, contact_id):
-        return self.delete(f"/contacts/{_path_id(contact_id)}")
+        return self.delete(f"/contacts/{_path_id(contact_id, 'contact_id')}")
 
     def get_contact_relations(self, contact_id):
-        return self.get(f"/contacts/{_path_id(contact_id)}/relations")
+        return self.get(f"/contacts/{_path_id(contact_id, 'contact_id')}/relations")
 
     def get_contact_relation(self, contact_id, relation_id):
         return self.get(
-            f"/contacts/{_path_id(contact_id)}/relations/{_path_id(relation_id)}"
+            f"/contacts/{_path_id(contact_id, 'contact_id')}/relations/{_path_id(relation_id, 'relation_id')}"
         )
 
     def create_contact_relation(self, contact_id, **fields):
-        return self.post(f"/contacts/{_path_id(contact_id)}/relations", fields)
+        return self.post(
+            f"/contacts/{_path_id(contact_id, 'contact_id')}/relations", fields
+        )
 
     def update_contact_relation(self, contact_id, relation_id, **fields):
         return self.put(
-            f"/contacts/{_path_id(contact_id)}/relations/{_path_id(relation_id)}",
+            f"/contacts/{_path_id(contact_id, 'contact_id')}/relations/{_path_id(relation_id, 'relation_id')}",
             fields,
         )
 
     def delete_contact_relation(self, contact_id, relation_id):
         return self.delete(
-            f"/contacts/{_path_id(contact_id)}/relations/{_path_id(relation_id)}"
+            f"/contacts/{_path_id(contact_id, 'contact_id')}/relations/{_path_id(relation_id, 'relation_id')}"
         )
 
     def get_contact_tags(self, contact_id):
-        return self.get(f"/contacts/{_path_id(contact_id)}/tags")
+        return self.get(f"/contacts/{_path_id(contact_id, 'contact_id')}/tags")
 
     def add_contact_tags(self, contact_id, tags: list):
-        return self.post(f"/contacts/{_path_id(contact_id)}/tags", tags)
+        return self.post(f"/contacts/{_path_id(contact_id, 'contact_id')}/tags", tags)
 
     def remove_contact_tags(self, contact_id, tag_id: str):
-        return self.delete(f"/contacts/{_path_id(contact_id)}/tags/{_path_id(tag_id)}")
+        return self.delete(
+            f"/contacts/{_path_id(contact_id, 'contact_id')}/tags/{_path_id(tag_id, 'tag_id')}"
+        )
 
     # ── Matters ───────────────────────────────────────────────────────────────
 
@@ -590,7 +607,7 @@ class SmokeBallClient:
         return self._get_page("/matters", limit=limit, offset=offset)
 
     def get_matter(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}")
+        return self.get(f"/matters/{_path_id(matter_id, 'matter_id')}")
 
     def create_matter(
         self,
@@ -614,28 +631,34 @@ class SmokeBallClient:
         return self.post("/matters", body)
 
     def update_matter(self, matter_id, **fields):
-        return self.put(f"/matters/{_path_id(matter_id)}", fields)
+        return self.put(f"/matters/{_path_id(matter_id, 'matter_id')}", fields)
 
     def patch_matter(self, matter_id, **fields):
-        return self.patch(f"/matters/{_path_id(matter_id)}", fields)
+        return self.patch(f"/matters/{_path_id(matter_id, 'matter_id')}", fields)
 
     def delete_matter(self, matter_id):
-        return self.delete(f"/matters/{_path_id(matter_id)}")
+        return self.delete(f"/matters/{_path_id(matter_id, 'matter_id')}")
 
     def get_matter_billing_configuration(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/billingconfiguration")
+        return self.get(
+            f"/matters/{_path_id(matter_id, 'matter_id')}/billingconfiguration"
+        )
 
     def update_matter_billing_configuration(self, matter_id, **fields):
-        return self.put(f"/matters/{_path_id(matter_id)}/billingconfiguration", fields)
+        return self.put(
+            f"/matters/{_path_id(matter_id, 'matter_id')}/billingconfiguration", fields
+        )
 
     def get_matter_tags(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/tags")
+        return self.get(f"/matters/{_path_id(matter_id, 'matter_id')}/tags")
 
     def add_matter_tags(self, matter_id, tags: list):
-        return self.post(f"/matters/{_path_id(matter_id)}/tags", tags)
+        return self.post(f"/matters/{_path_id(matter_id, 'matter_id')}/tags", tags)
 
     def remove_matter_tags(self, matter_id, tag_id: str):
-        return self.delete(f"/matters/{_path_id(matter_id)}/tags/{_path_id(tag_id)}")
+        return self.delete(
+            f"/matters/{_path_id(matter_id, 'matter_id')}/tags/{_path_id(tag_id, 'tag_id')}"
+        )
 
     # ── Leads ─────────────────────────────────────────────────────────────────
 
@@ -643,7 +666,7 @@ class SmokeBallClient:
         return self._get_page("/leads", limit=limit, offset=offset)
 
     def get_lead(self, lead_id):
-        return self.get(f"/leads/{_path_id(lead_id)}")
+        return self.get(f"/leads/{_path_id(lead_id, 'lead_id')}")
 
     def create_lead(self, matter_type_id: str = "", client_id: str = ""):
         body: dict[str, object] = {"isLead": True}
@@ -654,13 +677,13 @@ class SmokeBallClient:
         return self.post("/matters", body)
 
     def update_lead(self, lead_id, **fields):
-        return self.put(f"/leads/{_path_id(lead_id)}", fields)
+        return self.put(f"/leads/{_path_id(lead_id, 'lead_id')}", fields)
 
     def patch_lead(self, lead_id, **fields):
-        return self.patch(f"/leads/{_path_id(lead_id)}", fields)
+        return self.patch(f"/leads/{_path_id(lead_id, 'lead_id')}", fields)
 
     def delete_lead(self, lead_id):
-        return self.delete(f"/leads/{_path_id(lead_id)}")
+        return self.delete(f"/leads/{_path_id(lead_id, 'lead_id')}")
 
     # ── Matter Types ──────────────────────────────────────────────────────────
 
@@ -668,7 +691,7 @@ class SmokeBallClient:
         return self._get_page("/mattertypes", limit=limit, offset=offset)
 
     def get_matter_type(self, matter_type_id):
-        return self.get(f"/mattertypes/{_path_id(matter_type_id)}")
+        return self.get(f"/mattertypes/{_path_id(matter_type_id, 'matter_type_id')}")
 
     def list_matter_type_categories(self):
         return self.get("/mattertypes/categories")
@@ -679,61 +702,68 @@ class SmokeBallClient:
         return self.get("/stages")
 
     def get_stage_set(self, stage_set_id):
-        return self.get(f"/stages/{_path_id(stage_set_id)}")
+        return self.get(f"/stages/{_path_id(stage_set_id, 'stage_set_id')}")
 
     def get_stage_in_set(self, stage_set_id, stage_id):
-        return self.get(f"/stages/{_path_id(stage_set_id)}/stages/{_path_id(stage_id)}")
+        return self.get(
+            f"/stages/{_path_id(stage_set_id, 'stage_set_id')}/stages/{_path_id(stage_id, 'stage_id')}"
+        )
 
     def list_matter_stage_mappings(self):
         return self.get("/stages/matterstagesmapping")
 
     def get_matter_stage(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/stage")
+        return self.get(f"/matters/{_path_id(matter_id, 'matter_id')}/stage")
 
     # ── Roles ─────────────────────────────────────────────────────────────────
 
     def get_roles_on_matter(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/roles")
+        return self.get(f"/matters/{_path_id(matter_id, 'matter_id')}/roles")
 
     def get_role_on_matter(self, matter_id, role_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/roles/{_path_id(role_id)}")
+        return self.get(
+            f"/matters/{_path_id(matter_id, 'matter_id')}/roles/{_path_id(role_id, 'role_id')}"
+        )
 
     def add_role_to_matter(self, matter_id, **fields):
-        return self.post(f"/matters/{_path_id(matter_id)}/roles", fields)
+        return self.post(f"/matters/{_path_id(matter_id, 'matter_id')}/roles", fields)
 
     def update_role_on_matter(self, matter_id, role_id, **fields):
         return self.put(
-            f"/matters/{_path_id(matter_id)}/roles/{_path_id(role_id)}", fields
+            f"/matters/{_path_id(matter_id, 'matter_id')}/roles/{_path_id(role_id, 'role_id')}",
+            fields,
         )
 
     def remove_role_from_matter(self, matter_id, role_id):
-        return self.delete(f"/matters/{_path_id(matter_id)}/roles/{_path_id(role_id)}")
+        return self.delete(
+            f"/matters/{_path_id(matter_id, 'matter_id')}/roles/{_path_id(role_id, 'role_id')}"
+        )
 
     # ── Relationships ─────────────────────────────────────────────────────────
 
     def get_relationships_on_matter(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/relationships")
+        return self.get(f"/matters/{_path_id(matter_id, 'matter_id')}/relationships")
 
     def get_relationship_on_role(self, matter_id, role_id):
         return self.get(
-            f"/matters/{_path_id(matter_id)}/roles/{_path_id(role_id)}/relationships"
+            f"/matters/{_path_id(matter_id, 'matter_id')}/roles/{_path_id(role_id, 'role_id')}/relationships"
         )
 
     def add_relationship_to_role(self, matter_id, role_id, **fields):
         return self.post(
-            f"/matters/{_path_id(matter_id)}/roles/{_path_id(role_id)}/relationships",
+            f"/matters/{_path_id(matter_id, 'matter_id')}/roles/{_path_id(role_id, 'role_id')}/relationships",
             fields,
         )
 
     def update_relationship(self, matter_id, role_id, relationship_id, **fields):
         return self.put(
-            f"/matters/{_path_id(matter_id)}/roles/{_path_id(role_id)}/relationships/{_path_id(relationship_id)}",
+            f"/matters/{_path_id(matter_id, 'matter_id')}/roles/{_path_id(role_id, 'role_id')}/relationships/{_path_id(relationship_id, 'relationship_id')}",
             fields,
         )
 
     def remove_relationship_from_role(self, matter_id, role_id, relationship_id):
         return self.delete(
-            f"/matters/{_path_id(matter_id)}/roles/{_path_id(role_id)}/relationships/{_path_id(relationship_id)}"
+            f"/matters/{_path_id(matter_id, 'matter_id')}/roles/{_path_id(role_id, 'role_id')}/relationships/{_path_id(relationship_id, 'relationship_id')}"
         )
 
     # ── Tasks ─────────────────────────────────────────────────────────────────
@@ -745,48 +775,53 @@ class SmokeBallClient:
         return self._get_page("/tasks", limit=limit, offset=offset, params=params)
 
     def get_task(self, task_id):
-        return self.get(f"/tasks/{_path_id(task_id)}")
+        return self.get(f"/tasks/{_path_id(task_id, 'task_id')}")
 
     def create_task(self, **fields):
         return self.post("/tasks", fields)
 
     def update_task(self, task_id, **fields):
-        return self.put(f"/tasks/{_path_id(task_id)}", fields)
+        return self.put(f"/tasks/{_path_id(task_id, 'task_id')}", fields)
 
     def delete_task(self, task_id):
-        return self.delete(f"/tasks/{_path_id(task_id)}")
+        return self.delete(f"/tasks/{_path_id(task_id, 'task_id')}")
 
     def get_subtasks(self, task_id):
-        return self.get(f"/tasks/{_path_id(task_id)}/subtasks")
+        return self.get(f"/tasks/{_path_id(task_id, 'task_id')}/subtasks")
 
     def get_subtask(self, task_id, subtask_id):
-        return self.get(f"/tasks/{_path_id(task_id)}/subtasks/{_path_id(subtask_id)}")
+        return self.get(
+            f"/tasks/{_path_id(task_id, 'task_id')}/subtasks/{_path_id(subtask_id, 'subtask_id')}"
+        )
 
     def create_subtask(self, task_id, **fields):
-        return self.post(f"/tasks/{_path_id(task_id)}/subtasks", fields)
+        return self.post(f"/tasks/{_path_id(task_id, 'task_id')}/subtasks", fields)
 
     def update_subtask(self, task_id, subtask_id, **fields):
         return self.put(
-            f"/tasks/{_path_id(task_id)}/subtasks/{_path_id(subtask_id)}", fields
+            f"/tasks/{_path_id(task_id, 'task_id')}/subtasks/{_path_id(subtask_id, 'subtask_id')}",
+            fields,
         )
 
     def delete_subtask(self, task_id, subtask_id):
         return self.delete(
-            f"/tasks/{_path_id(task_id)}/subtasks/{_path_id(subtask_id)}"
+            f"/tasks/{_path_id(task_id, 'task_id')}/subtasks/{_path_id(subtask_id, 'subtask_id')}"
         )
 
     def get_task_documents(self, task_id):
-        return self.get(f"/tasks/{_path_id(task_id)}/documents")
+        return self.get(f"/tasks/{_path_id(task_id, 'task_id')}/documents")
 
     def get_task_document(self, task_id, document_id):
-        return self.get(f"/tasks/{_path_id(task_id)}/documents/{_path_id(document_id)}")
+        return self.get(
+            f"/tasks/{_path_id(task_id, 'task_id')}/documents/{_path_id(document_id, 'document_id')}"
+        )
 
     def create_task_document(self, task_id, **fields):
-        return self.post(f"/tasks/{_path_id(task_id)}/documents", fields)
+        return self.post(f"/tasks/{_path_id(task_id, 'task_id')}/documents", fields)
 
     def delete_task_document(self, task_id, document_id):
         return self.delete(
-            f"/tasks/{_path_id(task_id)}/documents/{_path_id(document_id)}"
+            f"/tasks/{_path_id(task_id, 'task_id')}/documents/{_path_id(document_id, 'document_id')}"
         )
 
     # ── Events ────────────────────────────────────────────────────────────────
@@ -798,51 +833,54 @@ class SmokeBallClient:
         return self._get_page("/events", limit=limit, offset=offset, params=params)
 
     def get_event(self, event_id):
-        return self.get(f"/events/{_path_id(event_id)}")
+        return self.get(f"/events/{_path_id(event_id, 'event_id')}")
 
     def create_event(self, **fields):
         return self.post("/events", fields)
 
     def update_event(self, event_id, **fields):
-        return self.put(f"/events/{_path_id(event_id)}", fields)
+        return self.put(f"/events/{_path_id(event_id, 'event_id')}", fields)
 
     def delete_event(self, event_id):
-        return self.delete(f"/events/{_path_id(event_id)}")
+        return self.delete(f"/events/{_path_id(event_id, 'event_id')}")
 
     def get_event_reminders(self, event_id):
-        return self.get(f"/events/{_path_id(event_id)}/reminders")
+        return self.get(f"/events/{_path_id(event_id, 'event_id')}/reminders")
 
     def create_event_reminder(self, event_id, **fields):
-        return self.post(f"/events/{_path_id(event_id)}/reminders", fields)
+        return self.post(f"/events/{_path_id(event_id, 'event_id')}/reminders", fields)
 
     def update_event_reminder(self, event_id, reminder_id, **fields):
         return self.put(
-            f"/events/{_path_id(event_id)}/reminders/{_path_id(reminder_id)}", fields
+            f"/events/{_path_id(event_id, 'event_id')}/reminders/{_path_id(reminder_id, 'reminder_id')}",
+            fields,
         )
 
     def delete_event_reminder(self, event_id, reminder_id):
         return self.delete(
-            f"/events/{_path_id(event_id)}/reminders/{_path_id(reminder_id)}"
+            f"/events/{_path_id(event_id, 'event_id')}/reminders/{_path_id(reminder_id, 'reminder_id')}"
         )
 
     # ── Memos ─────────────────────────────────────────────────────────────────
 
     def get_memos_on_matter(self, matter_id, limit=50, offset=0):
         return self._get_page(
-            f"/matters/{_path_id(matter_id)}/memos", limit=limit, offset=offset
+            f"/matters/{_path_id(matter_id, 'matter_id')}/memos",
+            limit=limit,
+            offset=offset,
         )
 
     def get_memo(self, memo_id):
-        return self.get(f"/memos/{_path_id(memo_id)}")
+        return self.get(f"/memos/{_path_id(memo_id, 'memo_id')}")
 
     def create_memo(self, matter_id, **fields):
-        return self.post(f"/matters/{_path_id(matter_id)}/memos", fields)
+        return self.post(f"/matters/{_path_id(matter_id, 'matter_id')}/memos", fields)
 
     def update_memo(self, memo_id, **fields):
-        return self.put(f"/memos/{_path_id(memo_id)}", fields)
+        return self.put(f"/memos/{_path_id(memo_id, 'memo_id')}", fields)
 
     def delete_memo(self, memo_id):
-        return self.delete(f"/memos/{_path_id(memo_id)}")
+        return self.delete(f"/memos/{_path_id(memo_id, 'memo_id')}")
 
     # ── Fees ──────────────────────────────────────────────────────────────────
 
@@ -853,19 +891,19 @@ class SmokeBallClient:
         return self._get_page("/fees", limit=limit, offset=offset, params=params)
 
     def get_fee(self, fee_id):
-        return self.get(f"/fees/{_path_id(fee_id)}")
+        return self.get(f"/fees/{_path_id(fee_id, 'fee_id')}")
 
     def create_fee(self, **fields):
         return self.post("/fees", fields)
 
     def update_fee(self, fee_id, **fields):
-        return self.put(f"/fees/{_path_id(fee_id)}", fields)
+        return self.put(f"/fees/{_path_id(fee_id, 'fee_id')}", fields)
 
     def patch_fee(self, fee_id, **fields):
-        return self.patch(f"/fees/{_path_id(fee_id)}", fields)
+        return self.patch(f"/fees/{_path_id(fee_id, 'fee_id')}", fields)
 
     def delete_fee(self, fee_id):
-        return self.delete(f"/fees/{_path_id(fee_id)}")
+        return self.delete(f"/fees/{_path_id(fee_id, 'fee_id')}")
 
     # ── Expenses ──────────────────────────────────────────────────────────────
 
@@ -876,19 +914,19 @@ class SmokeBallClient:
         return self._get_page("/expenses", limit=limit, offset=offset, params=params)
 
     def get_expense(self, expense_id):
-        return self.get(f"/expenses/{_path_id(expense_id)}")
+        return self.get(f"/expenses/{_path_id(expense_id, 'expense_id')}")
 
     def create_expense(self, **fields):
         return self.post("/expenses", fields)
 
     def update_expense(self, expense_id, **fields):
-        return self.put(f"/expenses/{_path_id(expense_id)}", fields)
+        return self.put(f"/expenses/{_path_id(expense_id, 'expense_id')}", fields)
 
     def patch_expense(self, expense_id, **fields):
-        return self.patch(f"/expenses/{_path_id(expense_id)}", fields)
+        return self.patch(f"/expenses/{_path_id(expense_id, 'expense_id')}", fields)
 
     def delete_expense(self, expense_id):
-        return self.delete(f"/expenses/{_path_id(expense_id)}")
+        return self.delete(f"/expenses/{_path_id(expense_id, 'expense_id')}")
 
     # ── Invoices ──────────────────────────────────────────────────────────────
 
@@ -899,10 +937,10 @@ class SmokeBallClient:
         return self._get_page("/invoices", limit=limit, offset=offset, params=params)
 
     def get_invoice(self, invoice_id):
-        return self.get(f"/invoices/{_path_id(invoice_id)}")
+        return self.get(f"/invoices/{_path_id(invoice_id, 'invoice_id')}")
 
     def get_invoice_download_url(self, invoice_id):
-        return self.get(f"/invoices/{_path_id(invoice_id)}/downloadurl")
+        return self.get(f"/invoices/{_path_id(invoice_id, 'invoice_id')}/downloadurl")
 
     # ── Activity Codes ────────────────────────────────────────────────────────
 
@@ -910,16 +948,16 @@ class SmokeBallClient:
         return self._get_page("/activitycodes", limit=limit, offset=offset)
 
     def get_activity_code(self, code_id):
-        return self.get(f"/activitycodes/{_path_id(code_id)}")
+        return self.get(f"/activitycodes/{_path_id(code_id, 'code_id')}")
 
     def create_activity_code(self, **fields):
         return self.post("/activitycodes", fields)
 
     def update_activity_code(self, code_id, **fields):
-        return self.put(f"/activitycodes/{_path_id(code_id)}", fields)
+        return self.put(f"/activitycodes/{_path_id(code_id, 'code_id')}", fields)
 
     def delete_activity_code(self, code_id):
-        return self.delete(f"/activitycodes/{_path_id(code_id)}")
+        return self.delete(f"/activitycodes/{_path_id(code_id, 'code_id')}")
 
     # ── Bank Accounts ─────────────────────────────────────────────────────────
 
@@ -927,126 +965,146 @@ class SmokeBallClient:
         return self._get_page("/bankaccounts", limit=limit, offset=offset)
 
     def get_bank_account(self, account_id):
-        return self.get(f"/bankaccounts/{_path_id(account_id)}")
+        return self.get(f"/bankaccounts/{_path_id(account_id, 'account_id')}")
 
     def get_bank_account_matter_balances(self, account_id):
-        return self.get(f"/bankaccounts/{_path_id(account_id)}/matterbalances")
+        return self.get(
+            f"/bankaccounts/{_path_id(account_id, 'account_id')}/matterbalances"
+        )
 
     def get_protected_bank_account_balance(self, account_id):
-        return self.get(f"/bankaccounts/{_path_id(account_id)}/protectedbalance")
+        return self.get(
+            f"/bankaccounts/{_path_id(account_id, 'account_id')}/protectedbalance"
+        )
 
     def get_transactions(self, account_id, limit=50, offset=0):
         return self._get_page(
-            f"/bankaccounts/{_path_id(account_id)}/transactions",
+            f"/bankaccounts/{_path_id(account_id, 'account_id')}/transactions",
             limit=limit,
             offset=offset,
         )
 
     def get_transaction(self, account_id, transaction_id):
         return self.get(
-            f"/bankaccounts/{_path_id(account_id)}/transactions/{_path_id(transaction_id)}"
+            f"/bankaccounts/{_path_id(account_id, 'account_id')}/transactions/{_path_id(transaction_id, 'transaction_id')}"
         )
 
     def create_transaction(self, account_id, **fields):
-        return self.post(f"/bankaccounts/{_path_id(account_id)}/transactions", fields)
+        return self.post(
+            f"/bankaccounts/{_path_id(account_id, 'account_id')}/transactions", fields
+        )
 
     def create_requisition(self, account_id, **fields):
-        return self.post(f"/bankaccounts/{_path_id(account_id)}/requisitions", fields)
+        return self.post(
+            f"/bankaccounts/{_path_id(account_id, 'account_id')}/requisitions", fields
+        )
 
     def protect_funds(self, account_id, **fields):
-        return self.post(f"/bankaccounts/{_path_id(account_id)}/protect", fields)
+        return self.post(
+            f"/bankaccounts/{_path_id(account_id, 'account_id')}/protect", fields
+        )
 
     def unprotect_funds(self, account_id, **fields):
-        return self.post(f"/bankaccounts/{_path_id(account_id)}/unprotect", fields)
+        return self.post(
+            f"/bankaccounts/{_path_id(account_id, 'account_id')}/unprotect", fields
+        )
 
     # ── Files ─────────────────────────────────────────────────────────────────
 
     def get_files_on_matter(self, matter_id, limit=50, offset=0):
         return self._get_page(
-            f"/matters/{_path_id(matter_id)}/files", limit=limit, offset=offset
+            f"/matters/{_path_id(matter_id, 'matter_id')}/files",
+            limit=limit,
+            offset=offset,
         )
 
     def get_file(self, file_id):
-        return self.get(f"/files/{_path_id(file_id)}")
+        return self.get(f"/files/{_path_id(file_id, 'file_id')}")
 
     def get_file_download_url(self, file_id):
-        return self.get(f"/files/{_path_id(file_id)}/downloadurl")
+        return self.get(f"/files/{_path_id(file_id, 'file_id')}/downloadurl")
 
     def get_file_upload_url(self, file_id):
-        return self.get(f"/files/{_path_id(file_id)}/uploadurl")
+        return self.get(f"/files/{_path_id(file_id, 'file_id')}/uploadurl")
 
     def get_file_history(self, matter_id, limit=50, offset=0):
         return self._get_page(
-            f"/matters/{_path_id(matter_id)}/files/history", limit=limit, offset=offset
+            f"/matters/{_path_id(matter_id, 'matter_id')}/files/history",
+            limit=limit,
+            offset=offset,
         )
 
     def add_file_to_matter(self, matter_id, **fields):
-        return self.post(f"/matters/{_path_id(matter_id)}/files", fields)
+        return self.post(f"/matters/{_path_id(matter_id, 'matter_id')}/files", fields)
 
     def add_files_to_matter(self, matter_id, files: list):
         return self.post(
-            f"/matters/{_path_id(matter_id)}/files/batch", {"files": files}
+            f"/matters/{_path_id(matter_id, 'matter_id')}/files/batch", {"files": files}
         )
 
     def patch_file(self, file_id, **fields):
-        return self.patch(f"/files/{_path_id(file_id)}", fields)
+        return self.patch(f"/files/{_path_id(file_id, 'file_id')}", fields)
 
     def delete_file(self, file_id):
-        return self.delete(f"/files/{_path_id(file_id)}")
+        return self.delete(f"/files/{_path_id(file_id, 'file_id')}")
 
     def create_preview_request(self, file_id):
-        return self.post(f"/files/{_path_id(file_id)}/preview")
+        return self.post(f"/files/{_path_id(file_id, 'file_id')}/preview")
 
     def get_preview_info(self, file_id):
-        return self.get(f"/files/{_path_id(file_id)}/preview")
+        return self.get(f"/files/{_path_id(file_id, 'file_id')}/preview")
 
     def get_preview_info_by_version(self, file_id, version_id):
         return self.get(
-            f"/files/{_path_id(file_id)}/versions/{_path_id(version_id)}/preview"
+            f"/files/{_path_id(file_id, 'file_id')}/versions/{_path_id(version_id, 'version_id')}/preview"
         )
 
     # ── Folders ───────────────────────────────────────────────────────────────
 
     def get_root_folder_contents(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/folders")
+        return self.get(f"/matters/{_path_id(matter_id, 'matter_id')}/folders")
 
     def get_folder_contents(self, matter_id, folder_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/folders/{_path_id(folder_id)}")
+        return self.get(
+            f"/matters/{_path_id(matter_id, 'matter_id')}/folders/{_path_id(folder_id, 'folder_id')}"
+        )
 
     def get_folder_path_hierarchy(self, matter_id, folder_id):
         return self.get(
-            f"/matters/{_path_id(matter_id)}/folders/{_path_id(folder_id)}/path"
+            f"/matters/{_path_id(matter_id, 'matter_id')}/folders/{_path_id(folder_id, 'folder_id')}/path"
         )
 
     def get_folder_history(self, matter_id, limit=50, offset=0):
         return self._get_page(
-            f"/matters/{_path_id(matter_id)}/folders/history",
+            f"/matters/{_path_id(matter_id, 'matter_id')}/folders/history",
             limit=limit,
             offset=offset,
         )
 
     def create_folder(self, matter_id, **fields):
-        return self.post(f"/matters/{_path_id(matter_id)}/folders", fields)
+        return self.post(f"/matters/{_path_id(matter_id, 'matter_id')}/folders", fields)
 
     def update_folder(self, folder_id, **fields):
-        return self.put(f"/folders/{_path_id(folder_id)}", fields)
+        return self.put(f"/folders/{_path_id(folder_id, 'folder_id')}", fields)
 
     def patch_folder(self, folder_id, **fields):
-        return self.patch(f"/folders/{_path_id(folder_id)}", fields)
+        return self.patch(f"/folders/{_path_id(folder_id, 'folder_id')}", fields)
 
     def delete_folder(self, folder_id):
-        return self.delete(f"/folders/{_path_id(folder_id)}")
+        return self.delete(f"/folders/{_path_id(folder_id, 'folder_id')}")
 
     # ── Archive ───────────────────────────────────────────────────────────────
 
     def get_matter_archive(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/archive")
+        return self.get(f"/matters/{_path_id(matter_id, 'matter_id')}/archive")
 
     def update_matter_archive(self, matter_id, **fields):
-        return self.put(f"/matters/{_path_id(matter_id)}/archive", fields)
+        return self.put(f"/matters/{_path_id(matter_id, 'matter_id')}/archive", fields)
 
     def patch_matter_archive(self, matter_id, **fields):
-        return self.patch(f"/matters/{_path_id(matter_id)}/archive", fields)
+        return self.patch(
+            f"/matters/{_path_id(matter_id, 'matter_id')}/archive", fields
+        )
 
     # ── Referral Types ────────────────────────────────────────────────────────
 
@@ -1054,7 +1112,9 @@ class SmokeBallClient:
         return self._get_page("/referraltypes", limit=limit, offset=offset)
 
     def get_referral_type(self, referral_type_id):
-        return self.get(f"/referraltypes/{_path_id(referral_type_id)}")
+        return self.get(
+            f"/referraltypes/{_path_id(referral_type_id, 'referral_type_id')}"
+        )
 
     # ── Authorization ─────────────────────────────────────────────────────────
 
@@ -1062,30 +1122,34 @@ class SmokeBallClient:
         return self.get("/authorization/groups")
 
     def get_authorization_group(self, group_id):
-        return self.get(f"/authorization/groups/{_path_id(group_id)}")
+        return self.get(f"/authorization/groups/{_path_id(group_id, 'group_id')}")
 
     def create_authorization_group(self, **fields):
         return self.post("/authorization/groups", fields)
 
     def update_authorization_group(self, group_id, **fields):
-        return self.put(f"/authorization/groups/{_path_id(group_id)}", fields)
+        return self.put(
+            f"/authorization/groups/{_path_id(group_id, 'group_id')}", fields
+        )
 
     def delete_authorization_group(self, group_id):
-        return self.delete(f"/authorization/groups/{_path_id(group_id)}")
+        return self.delete(f"/authorization/groups/{_path_id(group_id, 'group_id')}")
 
     def get_authorization_policy(self, reference):
-        return self.get(f"/policies/{_path_id(reference)}")
+        return self.get(f"/policies/{_path_id(reference, 'reference')}")
 
     def create_authorization_policy(self, **fields):
         return self.post("/policies", fields)
 
     def update_authorization_policy(self, reference, **fields):
-        return self.put(f"/policies/{_path_id(reference)}", fields)
+        return self.put(f"/policies/{_path_id(reference, 'reference')}", fields)
 
     # ── Notifications ─────────────────────────────────────────────────────────
 
     def get_notification(self, notification_id):
-        return self.get(f"/notifications/{_path_id(notification_id)}")
+        return self.get(
+            f"/notifications/{_path_id(notification_id, 'notification_id')}"
+        )
 
     def create_notification(self, **fields):
         return self.post("/notifications", fields)
@@ -1096,31 +1160,33 @@ class SmokeBallClient:
         return self.get("/plugins")
 
     def get_plugin(self, plugin_id):
-        return self.get(f"/plugins/{_path_id(plugin_id)}")
+        return self.get(f"/plugins/{_path_id(plugin_id, 'plugin_id')}")
 
     def create_plugin(self, **fields):
         return self.post("/plugins", fields)
 
     def update_plugin(self, plugin_id, **fields):
-        return self.put(f"/plugins/{_path_id(plugin_id)}", fields)
+        return self.put(f"/plugins/{_path_id(plugin_id, 'plugin_id')}", fields)
 
     def delete_plugin(self, plugin_id):
-        return self.delete(f"/plugins/{_path_id(plugin_id)}")
+        return self.delete(f"/plugins/{_path_id(plugin_id, 'plugin_id')}")
 
     def get_plugin_subscriptions(self):
         return self.get("/plugins/subscriptions")
 
     def get_plugin_subscription(self, subscription_id):
-        return self.get(f"/plugins/subscriptions/{_path_id(subscription_id)}")
+        return self.get(
+            f"/plugins/subscriptions/{_path_id(subscription_id, 'subscription_id')}"
+        )
 
     def subscribe_to_plugin(self, plugin_id):
-        return self.post(f"/plugins/{_path_id(plugin_id)}/subscribe")
+        return self.post(f"/plugins/{_path_id(plugin_id, 'plugin_id')}/subscribe")
 
     def unsubscribe_from_plugin(self, plugin_id):
-        return self.delete(f"/plugins/{_path_id(plugin_id)}/subscribe")
+        return self.delete(f"/plugins/{_path_id(plugin_id, 'plugin_id')}/subscribe")
 
     def request_plugin_url(self, plugin_id):
-        return self.get(f"/plugins/{_path_id(plugin_id)}/url")
+        return self.get(f"/plugins/{_path_id(plugin_id, 'plugin_id')}/url")
 
     # ── Portal ────────────────────────────────────────────────────────────────
 
@@ -1128,7 +1194,7 @@ class SmokeBallClient:
         return self.post("/portal/tasks", fields)
 
     def patch_portal_task(self, task_id, **fields):
-        return self.patch(f"/portal/tasks/{_path_id(task_id)}", fields)
+        return self.patch(f"/portal/tasks/{_path_id(task_id, 'task_id')}", fields)
 
     def send_portal_message(self, **fields):
         return self.post("/portal/messages", fields)
@@ -1139,47 +1205,51 @@ class SmokeBallClient:
         return self.get("/layoutdesigns")
 
     def get_layout_design(self, design_id):
-        return self.get(f"/layoutdesigns/{_path_id(design_id)}")
+        return self.get(f"/layoutdesigns/{_path_id(design_id, 'design_id')}")
 
     # ── Layout Matter Items ────────────────────────────────────────────────────
 
     def get_layouts_on_matter(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/layouts")
+        return self.get(f"/matters/{_path_id(matter_id, 'matter_id')}/layouts")
 
     def get_layout_on_matter(self, matter_id, layout_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/layouts/{_path_id(layout_id)}")
+        return self.get(
+            f"/matters/{_path_id(matter_id, 'matter_id')}/layouts/{_path_id(layout_id, 'layout_id')}"
+        )
 
     def add_layout_to_matter(self, matter_id, **fields):
-        return self.post(f"/matters/{_path_id(matter_id)}/layouts", fields)
+        return self.post(f"/matters/{_path_id(matter_id, 'matter_id')}/layouts", fields)
 
     def add_contact_to_layout(self, matter_id, layout_id, **fields):
         return self.post(
-            f"/matters/{_path_id(matter_id)}/layouts/{_path_id(layout_id)}/contacts",
+            f"/matters/{_path_id(matter_id, 'matter_id')}/layouts/{_path_id(layout_id, 'layout_id')}/contacts",
             fields,
         )
 
     def get_layout_contacts(self, matter_id, layout_id):
         return self.get(
-            f"/matters/{_path_id(matter_id)}/layouts/{_path_id(layout_id)}/contacts"
+            f"/matters/{_path_id(matter_id, 'matter_id')}/layouts/{_path_id(layout_id, 'layout_id')}/contacts"
         )
 
     def merge_layout(self, matter_id, layout_id):
         return self.post(
-            f"/matters/{_path_id(matter_id)}/layouts/{_path_id(layout_id)}/merge"
+            f"/matters/{_path_id(matter_id, 'matter_id')}/layouts/{_path_id(layout_id, 'layout_id')}/merge"
         )
 
     def remove_layout_from_matter(self, matter_id, layout_id):
         return self.delete(
-            f"/matters/{_path_id(matter_id)}/layouts/{_path_id(layout_id)}"
+            f"/matters/{_path_id(matter_id, 'matter_id')}/layouts/{_path_id(layout_id, 'layout_id')}"
         )
 
     # ── Matter Items ──────────────────────────────────────────────────────────
 
     def get_items_on_matter(self, matter_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/items")
+        return self.get(f"/matters/{_path_id(matter_id, 'matter_id')}/items")
 
     def get_item_on_matter(self, matter_id, item_id):
-        return self.get(f"/matters/{_path_id(matter_id)}/items/{_path_id(item_id)}")
+        return self.get(
+            f"/matters/{_path_id(matter_id, 'matter_id')}/items/{_path_id(item_id, 'item_id')}"
+        )
 
     # ── Integrated Search ─────────────────────────────────────────────────────
 
@@ -1192,7 +1262,9 @@ class SmokeBallClient:
         return self.get("/webhooks/subscriptions")
 
     def get_webhook_subscription(self, subscription_id):
-        return self.get(f"/webhooks/subscriptions/{_path_id(subscription_id)}")
+        return self.get(
+            f"/webhooks/subscriptions/{_path_id(subscription_id, 'subscription_id')}"
+        )
 
     def create_webhook_subscription(self, event_type, url, **fields):
         _validate_webhook_url(url)
@@ -1202,13 +1274,20 @@ class SmokeBallClient:
     def update_webhook_subscription(self, subscription_id, **fields):
         if "url" in fields:
             _validate_webhook_url(fields["url"])
-        return self.put(f"/webhooks/subscriptions/{_path_id(subscription_id)}", fields)
+        return self.put(
+            f"/webhooks/subscriptions/{_path_id(subscription_id, 'subscription_id')}",
+            fields,
+        )
 
     def delete_webhook_subscription(self, subscription_id):
-        return self.delete(f"/webhooks/subscriptions/{_path_id(subscription_id)}")
+        return self.delete(
+            f"/webhooks/subscriptions/{_path_id(subscription_id, 'subscription_id')}"
+        )
 
     def get_webhook_event_types(self):
         return self.get("/webhooks/eventtypes")
 
     def notify_webhook_subscription(self, subscription_id):
-        return self.post(f"/webhooks/subscriptions/{_path_id(subscription_id)}/notify")
+        return self.post(
+            f"/webhooks/subscriptions/{_path_id(subscription_id, 'subscription_id')}/notify"
+        )

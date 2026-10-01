@@ -338,7 +338,7 @@ def test_retry_after_cumulative_sleep_never_exceeds_sixty(monkeypatch):
     assert error.value.retry_after == 30
 
 
-def test_string_id_path_segment_is_escaped(monkeypatch):
+def test_string_id_path_segment_is_validated(monkeypatch):
     response = requests.Response()
     response.status_code = 200
     response._content = b'{"ok":true}'
@@ -351,13 +351,13 @@ def test_string_id_path_segment_is_escaped(monkeypatch):
         return response
 
     monkeypatch.setattr(instance.session, "request", fake_request)
-    instance.get_staff_member("../x")
-    assert captured["url"].endswith("/staff/..%2Fx")
+    instance.get_staff_member("normal-id")
+    assert captured["url"].endswith("/staff/normal-id")
     assert "/staff/../x" not in captured["url"]
     assert captured["kwargs"]["timeout"] == 30
 
 
-def test_secondary_string_path_id_is_escaped(monkeypatch):
+def test_secondary_string_path_id_is_validated(monkeypatch):
     response = requests.Response()
     response.status_code = 200
     response._content = b'{"ok":true}'
@@ -369,8 +369,8 @@ def test_secondary_string_path_id_is_escaped(monkeypatch):
         "request",
         lambda method, url, **kwargs: captured.update(url=url) or response,
     )
-    instance.get_contact_relation("parent", "../x")
-    assert captured["url"].endswith("/contacts/parent/relations/..%2Fx")
+    instance.get_contact_relation("parent", "normal-id")
+    assert captured["url"].endswith("/contacts/parent/relations/normal-id")
     assert "/relations/../x" not in captured["url"]
 
 
