@@ -32,6 +32,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from smokeball_mcp.private_file import write_private_file
+
 # --- per-MCP configuration --------------------------------------------------
 SERVICE_NAME = "smokeball-mcp"
 CONFIG_DIR = Path.home() / ".smokeball-mcp"
@@ -122,18 +124,7 @@ def _write_env_file(values: dict[str, str]) -> None:
     except OSError:
         pass
     lines = [f"{k}={v}" for k, v in values.items()]
-    fd = os.open(ENV_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        if hasattr(os, "fchmod"):
-            os.fchmod(fd, 0o600)
-        else:  # pragma: no cover - Windows does not expose fchmod
-            os.chmod(ENV_FILE, 0o600)
-        with os.fdopen(fd, "w") as stream:
-            fd = -1
-            stream.write("\n".join(lines) + ("\n" if lines else ""))
-    finally:
-        if fd >= 0:
-            os.close(fd)
+    write_private_file(ENV_FILE, "\n".join(lines) + ("\n" if lines else ""))
 
 
 def get_secret(key: str, default: str = "") -> str:

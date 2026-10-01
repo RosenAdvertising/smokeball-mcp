@@ -1808,6 +1808,9 @@ def get_plugin(plugin_id: str) -> str:
 @mcp.tool()
 def create_plugin(name: str, url: str, description: str = "") -> str:
     """Register a new plugin integration."""
+    from smokeball_mcp.client import _validate_webhook_url
+
+    _validate_webhook_url(url)
     fields = {"name": name, "url": url}
     if description:
         fields["description"] = description
@@ -1817,6 +1820,10 @@ def create_plugin(name: str, url: str, description: str = "") -> str:
 @mcp.tool()
 def update_plugin(plugin_id: str, name: str = "", url: str = "") -> str:
     """Update a plugin's details."""
+    from smokeball_mcp.client import _validate_webhook_url
+
+    if url:
+        _validate_webhook_url(url)
     fields = {}
     if name:
         fields["name"] = name
@@ -2036,6 +2043,9 @@ def create_webhook_subscription(  # nosec B107
     event_type: str, url: str, secret: str = ""
 ) -> str:
     """Create a webhook subscription. event_type: from list_webhook_event_types."""
+    from smokeball_mcp.client import _validate_webhook_url
+
+    _validate_webhook_url(url)
     fields = {}
     if secret:
         fields["secret"] = secret
@@ -2050,6 +2060,10 @@ def update_webhook_subscription(
     subscription_id: str, url: str = "", active: str = ""
 ) -> str:
     """Update a webhook subscription URL or active state. active: 'true' or 'false'."""
+    from smokeball_mcp.client import _validate_webhook_url
+
+    if url:
+        _validate_webhook_url(url)
     fields = {}
     if url:
         fields["url"] = url

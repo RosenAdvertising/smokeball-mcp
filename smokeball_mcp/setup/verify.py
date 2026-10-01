@@ -4,14 +4,16 @@
 import sys
 from pathlib import Path
 
+from smokeball_mcp import credentials
+
 CONFIG_DIR = Path.home() / ".smokeball-mcp"
 
 
 def check_config():
-    env_file = CONFIG_DIR / ".env"
     token_file = CONFIG_DIR / "tokens.json"
 
-    if not env_file.exists():
+    required = ("SMOKEBALL_CLIENT_ID", "SMOKEBALL_CLIENT_SECRET", "SMOKEBALL_API_KEY")
+    if any(not credentials.get_secret(key) for key in required):
         print("✗ Missing credential configuration.")
         print("  Run: smokeball-mcp-setup")
         return False

@@ -130,3 +130,19 @@ Full coverage across 30 Smokeball API resource categories — 189 tools total.
 ## License
 
 MIT
+
+### Approved destination URLs
+
+Set `SMOKEBALL_ALLOWED_DESTINATION_HOSTS` in the server environment, for example
+`SMOKEBALL_ALLOWED_DESTINATION_HOSTS=hooks.firm.example,.integrations.firm.example`.
+Comma-separated exact hosts allow only that host; a leading dot allows the domain
+and its subdomains. Matching ignores case and trailing dots and normalizes IDNA.
+An empty or unset list refuses destination URLs before any request. HTTPS, no
+userinfo, and public literal addresses remain required. This administrator-owned
+list prevents model-supplied destinations from sending data to arbitrary hosts,
+including private-address DNS aliases and unapproved redirectors. Approve only
+hosts whose DNS and redirects the firm trusts; the vendor executes requests later.
+Tools cannot change this setting.
+
+`SMOKEBALL_REGION` is trimmed and lowercased before validation. It accepts only `us`, `au`, or `uk`. Setup also accepts the
+corresponding menu numbers. Unknown values fail; they never select US.

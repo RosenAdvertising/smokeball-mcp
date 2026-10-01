@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Smokeball API client. OAuth 2.0 auth code flow, x-api-key + Bearer headers, offset pagination."""
 
-import ipaddress
 import json
 import logging
 import math
@@ -15,6 +14,8 @@ from pathlib import Path
 import requests
 
 from smokeball_mcp import credentials
+from smokeball_mcp.regions import region_config
+from smokeball_mcp.url_security import UnsafeURL, validate_public_https
 
 logger = logging.getLogger(__name__)
 
@@ -150,49 +151,21 @@ REGIONS = {
 CONFIG_DIR = Path.home() / ".smokeball-mcp"
 REDIRECT_URI = "http://127.0.0.1:8768/callback"
 
-# Private/reserved address ranges that must not receive webhook payloads (SSRF hygiene).
-_PRIVATE_NETS = [
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("169.254.0.0/16"),  # link-local
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-    ipaddress.ip_network("fe80::/10"),
-]
-
 
 def _reject_webhook_url(reason: str) -> None:
     logger.warning("webhook_url_rejected reason=%s", reason)
-    raise ArgumentValidationError("target_url", "a public HTTPS URL")
+    raise ArgumentValidationError(
+        "target_url",
+        "a public HTTPS URL approved by SMOKEBALL_ALLOWED_DESTINATION_HOSTS",
+    )
 
 
 def _validate_webhook_url(url: str) -> None:
-    """Raise ValueError if url is not a safe https endpoint for webhook delivery.
-
-    Enforces:
-    - scheme must be https (prevents cleartext delivery)
-    - hostname must not resolve to a private, loopback, or link-local address
-      (prevents SSRF — Smokeball posting matter data to an internal service)
-
-    Note: this is a best-effort syntactic check on the literal hostname.
-    """
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https":
-        _reject_webhook_url("invalid_scheme")
-    hostname = parsed.hostname or ""
-    if not hostname:
-        _reject_webhook_url("missing_hostname")
+    """Validate the destination against administrator configuration."""
     try:
-        addr = ipaddress.ip_address(hostname)
-    except ValueError:
-        addr = None
-    if addr is not None and any(addr in net for net in _PRIVATE_NETS):
-        _reject_webhook_url("private_address")
-    _BLOCKED_HOSTS = {"localhost", "local", "internal", "metadata.google.internal"}
-    if hostname.lower() in _BLOCKED_HOSTS or hostname.lower().endswith(".local"):
-        _reject_webhook_url("reserved_hostname")
+        validate_public_https(url)
+    except UnsafeURL as exc:
+        _reject_webhook_url(str(exc))
 
 
 # Resolve credentials through the pluggable store (OS keyring -> .env file).
@@ -208,9 +181,9 @@ credentials.load_into_environ(
 CLIENT_ID = os.environ.get("SMOKEBALL_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("SMOKEBALL_CLIENT_SECRET", "")
 API_KEY = os.environ.get("SMOKEBALL_API_KEY", "")
-REGION = os.environ.get("SMOKEBALL_REGION", "us").lower()
+REGION = os.environ.get("SMOKEBALL_REGION", "us").strip().lower()
 
-_region_cfg = REGIONS.get(REGION, REGIONS["us"])
+_region_cfg = region_config(REGION, REGIONS)
 BASE_URL = _region_cfg["api"]
 AUTH_BASE = _region_cfg["auth"]
 TOKEN_URL = f"{AUTH_BASE}/connect/token"
@@ -1163,9 +1136,13 @@ class SmokeBallClient:
         return self.get(f"/plugins/{_path_id(plugin_id, 'plugin_id')}")
 
     def create_plugin(self, **fields):
+        if "url" in fields:
+            _validate_webhook_url(fields["url"])
         return self.post("/plugins", fields)
 
     def update_plugin(self, plugin_id, **fields):
+        if "url" in fields:
+            _validate_webhook_url(fields["url"])
         return self.put(f"/plugins/{_path_id(plugin_id, 'plugin_id')}", fields)
 
     def delete_plugin(self, plugin_id):

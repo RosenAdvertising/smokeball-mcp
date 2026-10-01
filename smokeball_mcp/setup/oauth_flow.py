@@ -115,9 +115,15 @@ def main():
             "Setup cancelled: all three credentials are required. Run smokeball-mcp-setup again."
         )
         raise SystemExit(1) from None
+    from smokeball_mcp.regions import region_config
+
     region_map = {"1": "us", "2": "au", "3": "uk"}
-    region = region_map.get(region_choice, "us")
-    region_cfg = REGIONS[region]
+    region = region_map.get(region_choice, region_choice).strip().lower()
+    try:
+        region_cfg = region_config(region, REGIONS)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
 
     auth_base = region_cfg["auth"]
     token_url = f"{auth_base}/connect/token"
