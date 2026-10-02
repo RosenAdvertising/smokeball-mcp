@@ -25,9 +25,13 @@ See https://github.com/jaraco/keyring#configuring for details.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
+
+from smokeball_mcp.private_file import write_private_file
 
 # --- per-MCP configuration --------------------------------------------------
 SERVICE_NAME = "smokeball-mcp"
@@ -42,6 +46,14 @@ _USE_KEYRING_FLAG = "SMOKEBALL_MCP_USE_KEYRING"
 # backend is a runtime fact (gated by ``_keyring_enabled()``), not something the
 # type checker can prove — so attribute access on it is intentionally untyped.
 keyring: Any
+logger = logging.getLogger(__name__)
+
+
+def atomic_private_json(path: Path, value: Any) -> None:
+    """Atomically replace a JSON token file using private platform storage."""
+    write_private_file(path, json.dumps(value, indent=2))
+
+
 try:  # pragma: no cover - import guard
     import keyring as _keyring_mod
     from keyring.errors import KeyringError
@@ -93,16 +105,13 @@ def _read_env_file() -> dict[str, str]:
 def _write_env_file(values: dict[str, str]) -> None:
     """Write the fallback ``.env`` file with 0600 perms in a 0700 dir."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        CONFIG_DIR.chmod(0o700)
-    except OSError:
-        pass
+    if os.name != "nt":
+        try:
+            CONFIG_DIR.chmod(0o700)
+        except OSError:
+            pass
     lines = [f"{k}={v}" for k, v in values.items()]
-    ENV_FILE.write_text("\n".join(lines) + ("\n" if lines else ""))
-    try:
-        ENV_FILE.chmod(0o600)
-    except OSError:
-        pass
+    write_private_file(ENV_FILE, "\n".join(lines) + ("\n" if lines else ""))
 
 
 def get_secret(key: str, default: str = "") -> str:
@@ -160,8 +169,8 @@ def delete_secret(key: str) -> None:
     if _keyring_enabled():
         try:
             keyring.delete_password(SERVICE_NAME, key)
-        except Exception:  # noqa: BLE001 - missing entry is fine
-            pass
+        except KeyringError:
+            logger.debug("credential_delete_fallback reason=keyring_error")
     existing = _read_env_file()
     if key in existing:
         existing.pop(key, None)

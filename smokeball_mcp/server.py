@@ -1,18 +1,161 @@
 #!/usr/bin/env python3
-"""Smokeball MCP Server — full Smokeball API coverage via FastMCP."""
+"""Smokeball MCP Server — full Smokeball API coverage via MCPServer."""
 
 import json
-from mcp.server.fastmcp import FastMCP
-from .client import SmokeBallClient
+import logging
+from typing import Annotated
 
-mcp = FastMCP(
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import (
+    ResourceError,
+    ResourceNotFoundError,
+    ToolError,
+    UnexpectedToolError,
+)
+from mcp.server.mcpserver.tools.base import Tool
+from pydantic import Field, ValidationError
+
+from .client import (
+    AccessDeniedError,
+    ArgumentValidationError,
+    AuthenticationError,
+    MissingCredentialsError,
+    RateLimitError,
+    SmokeBallClient,
+    TransportError,
+    VendorHTTPError,
+)
+
+logger = logging.getLogger(__name__)
+
+ListLimit = Annotated[int, Field(ge=1, le=200)]
+ListOffset = Annotated[int, Field(ge=0)]
+
+
+def _validation_message(exc: ValidationError, tool: Tool) -> str:
+    """Describe invalid argument names and expected shapes without echoing values."""
+    errors = exc.errors(include_input=False, include_url=False)
+    details = []
+    for error in errors:
+        field = (error.get("loc") or ("arguments",))[0]
+        if field not in tool.parameters.get("properties", {}):
+            field = "arguments"
+        schema: object = tool.parameters
+        for part in error.get("loc", ()):
+            if isinstance(schema, dict):
+                schema = schema.get("properties", {}).get(part, schema.get("items", {}))
+        shape = (
+            schema.get("type", "valid value")
+            if isinstance(schema, dict)
+            else "valid value"
+        )
+        if error.get("type") == "missing":
+            expected = f"a required {shape}"
+        elif field == "limit":
+            expected = "an integer from 1 to 200 (greater than or equal to 1)"
+        elif field == "offset":
+            expected = "a non-negative integer"
+        else:
+            expected = str(shape)
+        detail = f"{field} must be {expected}"
+        if detail not in details:
+            details.append(detail)
+    return "Invalid arguments: " + "; ".join(
+        details or ["provide values matching the tool schema"]
+    )
+
+
+def _classify_tool_exception(exc):
+    if isinstance(exc, MissingCredentialsError):
+        return {
+            "api_key": "Smokeball credentials are missing. Set SMOKEBALL_CLIENT_ID, SMOKEBALL_CLIENT_SECRET, and SMOKEBALL_API_KEY, then run smokeball-mcp-setup and restart the MCP server.",
+            "oauth_client": "Smokeball credentials are missing. Set SMOKEBALL_CLIENT_ID and SMOKEBALL_CLIENT_SECRET, then run smokeball-mcp-setup and restart the MCP server.",
+            "oauth_tokens": "Smokeball OAuth tokens are missing. Set SMOKEBALL_CLIENT_ID, SMOKEBALL_CLIENT_SECRET, and SMOKEBALL_API_KEY, then run smokeball-mcp-setup and restart the MCP server.",
+        }.get(str(exc))
+    if isinstance(exc, AuthenticationError):
+        return "Smokeball authorization was rejected or expired. Re-authorize with: smokeball-mcp-setup"
+    if isinstance(exc, AccessDeniedError):
+        return "Smokeball access denied: the connected account lacks permission for this action (or the authorization expired; re-run smokeball-mcp-setup if so)."
+    if isinstance(exc, RateLimitError):
+        return f"Smokeball rate limit exceeded (HTTP 429). Retry after {exc.retry_after} seconds."
+    if isinstance(exc, VendorHTTPError):
+        if exc.status == 404:
+            return "The requested item was not found (HTTP 404). Check the ID and try again."
+        return f"Smokeball API request failed (HTTP {exc.status}). {exc.reason}"
+    if isinstance(exc, ArgumentValidationError):
+        if exc.argument == "tags_json":
+            return "Argument error: tags_json must be a JSON array of tag objects."
+        return f"Invalid argument {exc.argument}: expected {exc.expected}."
+    if isinstance(exc, TransportError):
+        if exc.outcome_unknown:
+            return "Smokeball request outcome is unknown. Check whether it completed before retrying."
+        return "Smokeball could not be reached. Check the connection and retry."
+    return None
+
+
+class SafeMCPServer(MCPServer):
+    """Classify expected failures, including SDK argument validation."""
+
+    async def call_tool(self, name, arguments, context=None):
+        tool = self._tool_manager.get_tool(name)
+        if tool is None:
+            raise ToolError("Unknown tool. Choose a name from tools/list.")
+        try:
+            return await super().call_tool(name, arguments, context)
+        except ToolError as exc:
+            if not isinstance(exc, UnexpectedToolError) and isinstance(
+                exc.__cause__, ValidationError
+            ):
+                raise ToolError(_validation_message(exc.__cause__, tool)) from None
+            message = _classify_tool_exception(exc.__cause__)
+            if message is None:
+                logger.warning("tool_call_failed reason=unexpected")
+                raise ToolError(f"Error executing tool {tool.name}") from None
+            raise ToolError(f"Error executing tool {tool.name}: {message}") from None
+
+    async def read_resource(self, uri, context=None):
+        """Suppress SDK resource exception chains and log only fixed reasons."""
+        try:
+            return await super().read_resource(uri, context)
+        except ResourceNotFoundError:
+            raise ResourceNotFoundError("Resource not found.") from None
+        except ResourceError:
+            raise ResourceError(
+                "Unable to read the requested Smokeball resource."
+            ) from None
+        except Exception:
+            logger.warning("resource_read_failed reason=unexpected")
+            raise ResourceError(
+                "Unable to read the requested Smokeball resource."
+            ) from None
+
+
+mcp = SafeMCPServer(
     "smokeball-mcp",
+    version="0.1.0",
     instructions=(
         "Full access to Smokeball practice management: matters, contacts, leads, tasks, "
         "events, fees, expenses, invoices, files, folders, bank accounts, staff, plugins, "
         "webhooks, portal, and more."
     ),
 )
+
+
+def _parse_bool(
+    value: str, *, tool: str, field: str, optional: bool = True
+) -> bool | None:
+    """Parse the server's legacy string booleans without silently dropping errors."""
+    if optional and value == "":
+        return None
+    normalized = value.lower()
+    if normalized not in ("true", "false"):
+        logger.warning(
+            "tool_input_rejected tool=%s field=%s reason=invalid_boolean",
+            tool,
+            field,
+        )
+        raise ArgumentValidationError(field, "'true' or 'false'")
+    return normalized == "true"
 
 
 # ── Firm ──────────────────────────────────────────────────────────────────────
@@ -78,7 +221,7 @@ def delete_firm_user_mapping(mapping_id: str) -> str:
 
 
 @mcp.tool()
-def search_staff(query: str = "", limit: int = 50, offset: int = 0) -> str:
+def search_staff(query: str = "", limit: ListLimit = 50, offset: ListOffset = 0) -> str:
     """Search staff members. query: name or email fragment."""
     return json.dumps(
         SmokeBallClient().search_staff(query=query or None, limit=limit, offset=offset),
@@ -168,7 +311,7 @@ def resend_user_invitation(user_id: str) -> str:
 
 
 @mcp.tool()
-def list_contacts(limit: int = 50, offset: int = 0) -> str:
+def list_contacts(limit: ListLimit = 50, offset: ListOffset = 0) -> str:
     """List contacts with offset pagination."""
     return json.dumps(
         SmokeBallClient().list_contacts(limit=limit, offset=offset), indent=2
@@ -305,7 +448,7 @@ def remove_contact_tags(contact_id: str, tag_id: str) -> str:
 
 
 @mcp.tool()
-def list_matters(limit: int = 50, offset: int = 0) -> str:
+def list_matters(limit: ListLimit = 50, offset: ListOffset = 0) -> str:
     """List matters with offset pagination."""
     return json.dumps(
         SmokeBallClient().list_matters(limit=limit, offset=offset), indent=2
@@ -412,10 +555,19 @@ def add_matter_tags(matter_id: str, tags_json: str) -> str:
     Example: [{"id": "abc", "name": "Urgent", "color": "red", "type": "custom"}]"""
     try:
         tags = json.loads(tags_json)
-    except json.JSONDecodeError as e:
-        return json.dumps({"error": f"Invalid tags_json: {e}"})
+    except json.JSONDecodeError:
+        logger.warning(
+            "tool_input_rejected tool=add_matter_tags field=tags_json "
+            "reason=invalid_json"
+        )
+        raise ArgumentValidationError(
+            "tags_json", "a JSON array of tag objects"
+        ) from None
     if not isinstance(tags, list):
-        return json.dumps({"error": "tags_json must be a JSON array"})
+        logger.warning(
+            "tool_input_rejected tool=add_matter_tags field=tags_json reason=not_array"
+        )
+        raise ArgumentValidationError("tags_json", "a JSON array of tag objects")
     return json.dumps(SmokeBallClient().add_matter_tags(matter_id, tags), indent=2)
 
 
@@ -429,7 +581,7 @@ def remove_matter_tags(matter_id: str, tag_id: str) -> str:
 
 
 @mcp.tool()
-def list_leads(limit: int = 50, offset: int = 0) -> str:
+def list_leads(limit: ListLimit = 50, offset: ListOffset = 0) -> str:
     """List leads (potential new clients/matters)."""
     return json.dumps(
         SmokeBallClient().list_leads(limit=limit, offset=offset), indent=2
@@ -488,7 +640,7 @@ def delete_lead(lead_id: str) -> str:
 
 
 @mcp.tool()
-def list_matter_types(limit: int = 100, offset: int = 0) -> str:
+def list_matter_types(limit: ListLimit = 100, offset: ListOffset = 0) -> str:
     """List all matter types configured for this firm."""
     return json.dumps(
         SmokeBallClient().list_matter_types(limit=limit, offset=offset), indent=2
@@ -652,7 +804,9 @@ def remove_relationship_from_role(
 
 
 @mcp.tool()
-def list_tasks(matter_id: str = "", limit: int = 50, offset: int = 0) -> str:
+def list_tasks(
+    matter_id: str = "", limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """List tasks. Filter by matter_id to get matter-specific tasks."""
     return json.dumps(
         SmokeBallClient().get_tasks(
@@ -703,8 +857,9 @@ def update_task(
         fields["name"] = name
     if due_date:
         fields["dueDate"] = due_date
-    if completed_str.lower() in ("true", "false"):
-        fields["completed"] = completed_str.lower() == "true"
+    completed = _parse_bool(completed_str, tool="update_task", field="completed_str")
+    if completed is not None:
+        fields["completed"] = completed
     if notes:
         fields["notes"] = notes
     return json.dumps(SmokeBallClient().update_task(task_id, **fields), indent=2)
@@ -745,8 +900,9 @@ def update_subtask(
     fields = {}
     if name:
         fields["name"] = name
-    if completed_str.lower() in ("true", "false"):
-        fields["completed"] = completed_str.lower() == "true"
+    completed = _parse_bool(completed_str, tool="update_subtask", field="completed_str")
+    if completed is not None:
+        fields["completed"] = completed
     return json.dumps(
         SmokeBallClient().update_subtask(task_id, subtask_id, **fields), indent=2
     )
@@ -795,7 +951,9 @@ def delete_task_document(task_id: str, document_id: str) -> str:
 
 
 @mcp.tool()
-def list_events(matter_id: str = "", limit: int = 50, offset: int = 0) -> str:
+def list_events(
+    matter_id: str = "", limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """List calendar events. Filter by matter_id for matter-specific events."""
     return json.dumps(
         SmokeBallClient().get_events(
@@ -902,7 +1060,9 @@ def delete_event_reminder(event_id: str, reminder_id: str) -> str:
 
 
 @mcp.tool()
-def list_memos_on_matter(matter_id: str, limit: int = 50, offset: int = 0) -> str:
+def list_memos_on_matter(
+    matter_id: str, limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """List memos (notes) on a matter."""
     return json.dumps(
         SmokeBallClient().get_memos_on_matter(matter_id, limit=limit, offset=offset),
@@ -946,7 +1106,9 @@ def delete_memo(memo_id: str) -> str:
 
 
 @mcp.tool()
-def list_fees(matter_id: str = "", limit: int = 50, offset: int = 0) -> str:
+def list_fees(
+    matter_id: str = "", limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """List fee entries (billable time). Filter by matter_id for matter-specific fees."""
     return json.dumps(
         SmokeBallClient().get_fees(
@@ -980,7 +1142,9 @@ def create_fee(
         "staffId": staff_id,
         "date": date,
         "durationMinutes": duration_minutes,
-        "billable": billable.lower() == "true",
+        "billable": _parse_bool(
+            billable, tool="create_fee", field="billable", optional=False
+        ),
     }
     if description:
         fields["description"] = description
@@ -1005,8 +1169,9 @@ def update_fee(
         fields["description"] = description
     if duration_minutes:
         fields["durationMinutes"] = duration_minutes
-    if billable.lower() in ("true", "false"):
-        fields["billable"] = billable.lower() == "true"
+    billable_value = _parse_bool(billable, tool="update_fee", field="billable")
+    if billable_value is not None:
+        fields["billable"] = billable_value
     if rate:
         fields["rate"] = rate
     return json.dumps(SmokeBallClient().update_fee(fee_id, **fields), indent=2)
@@ -1016,10 +1181,12 @@ def update_fee(
 def patch_fee(fee_id: str, billable: str = "", billed: str = "") -> str:
     """Toggle a fee entry's billable or billed state (PATCH). Use 'true' or 'false'."""
     fields = {}
-    if billable.lower() in ("true", "false"):
-        fields["billable"] = billable.lower() == "true"
-    if billed.lower() in ("true", "false"):
-        fields["billed"] = billed.lower() == "true"
+    billable_value = _parse_bool(billable, tool="patch_fee", field="billable")
+    billed_value = _parse_bool(billed, tool="patch_fee", field="billed")
+    if billable_value is not None:
+        fields["billable"] = billable_value
+    if billed_value is not None:
+        fields["billed"] = billed_value
     return json.dumps(SmokeBallClient().patch_fee(fee_id, **fields), indent=2)
 
 
@@ -1033,7 +1200,9 @@ def delete_fee(fee_id: str) -> str:
 
 
 @mcp.tool()
-def list_expenses(matter_id: str = "", limit: int = 50, offset: int = 0) -> str:
+def list_expenses(
+    matter_id: str = "", limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """List expense entries. Filter by matter_id for matter-specific expenses."""
     return json.dumps(
         SmokeBallClient().get_expenses(
@@ -1064,7 +1233,9 @@ def create_expense(
         "matterId": matter_id,
         "date": date,
         "amount": amount,
-        "billable": billable.lower() == "true",
+        "billable": _parse_bool(
+            billable, tool="create_expense", field="billable", optional=False
+        ),
     }
     if description:
         fields["description"] = description
@@ -1083,8 +1254,9 @@ def update_expense(
         fields["description"] = description
     if amount:
         fields["amount"] = amount
-    if billable.lower() in ("true", "false"):
-        fields["billable"] = billable.lower() == "true"
+    billable_value = _parse_bool(billable, tool="update_expense", field="billable")
+    if billable_value is not None:
+        fields["billable"] = billable_value
     return json.dumps(SmokeBallClient().update_expense(expense_id, **fields), indent=2)
 
 
@@ -1092,10 +1264,12 @@ def update_expense(
 def patch_expense(expense_id: str, billable: str = "", billed: str = "") -> str:
     """Toggle an expense entry's billable or billed state (PATCH). Use 'true' or 'false'."""
     fields = {}
-    if billable.lower() in ("true", "false"):
-        fields["billable"] = billable.lower() == "true"
-    if billed.lower() in ("true", "false"):
-        fields["billed"] = billed.lower() == "true"
+    billable_value = _parse_bool(billable, tool="patch_expense", field="billable")
+    billed_value = _parse_bool(billed, tool="patch_expense", field="billed")
+    if billable_value is not None:
+        fields["billable"] = billable_value
+    if billed_value is not None:
+        fields["billed"] = billed_value
     return json.dumps(SmokeBallClient().patch_expense(expense_id, **fields), indent=2)
 
 
@@ -1109,7 +1283,9 @@ def delete_expense(expense_id: str) -> str:
 
 
 @mcp.tool()
-def list_invoices(matter_id: str = "", limit: int = 50, offset: int = 0) -> str:
+def list_invoices(
+    matter_id: str = "", limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """List invoices. Filter by matter_id for matter-specific invoices."""
     return json.dumps(
         SmokeBallClient().get_invoices(
@@ -1135,7 +1311,7 @@ def get_invoice_download_url(invoice_id: str) -> str:
 
 
 @mcp.tool()
-def list_activity_codes(limit: int = 100, offset: int = 0) -> str:
+def list_activity_codes(limit: ListLimit = 100, offset: ListOffset = 0) -> str:
     """List billing activity codes configured for this firm."""
     return json.dumps(
         SmokeBallClient().get_activity_codes(limit=limit, offset=offset), indent=2
@@ -1184,7 +1360,7 @@ def delete_activity_code(code_id: str) -> str:
 
 
 @mcp.tool()
-def list_bank_accounts(limit: int = 50, offset: int = 0) -> str:
+def list_bank_accounts(limit: ListLimit = 50, offset: ListOffset = 0) -> str:
     """List bank accounts (trust, operating) for this firm."""
     return json.dumps(
         SmokeBallClient().get_bank_accounts(limit=limit, offset=offset), indent=2
@@ -1214,7 +1390,9 @@ def get_protected_bank_account_balance(account_id: str) -> str:
 
 
 @mcp.tool()
-def list_transactions(account_id: str, limit: int = 50, offset: int = 0) -> str:
+def list_transactions(
+    account_id: str, limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """List transactions for a bank account."""
     return json.dumps(
         SmokeBallClient().get_transactions(account_id, limit=limit, offset=offset),
@@ -1294,7 +1472,9 @@ def unprotect_funds(account_id: str, matter_id: str, amount: float) -> str:
 
 
 @mcp.tool()
-def list_files_on_matter(matter_id: str, limit: int = 50, offset: int = 0) -> str:
+def list_files_on_matter(
+    matter_id: str, limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """List files attached to a matter."""
     return json.dumps(
         SmokeBallClient().get_files_on_matter(matter_id, limit=limit, offset=offset),
@@ -1321,7 +1501,9 @@ def get_file_upload_url(file_id: str) -> str:
 
 
 @mcp.tool()
-def get_file_history(matter_id: str, limit: int = 50, offset: int = 0) -> str:
+def get_file_history(
+    matter_id: str, limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """Get file version history for a matter."""
     return json.dumps(
         SmokeBallClient().get_file_history(matter_id, limit=limit, offset=offset),
@@ -1410,7 +1592,9 @@ def get_folder_path_hierarchy(matter_id: str, folder_id: str) -> str:
 
 
 @mcp.tool()
-def get_folder_history(matter_id: str, limit: int = 50, offset: int = 0) -> str:
+def get_folder_history(
+    matter_id: str, limit: ListLimit = 50, offset: ListOffset = 0
+) -> str:
     """Get folder activity history for a matter."""
     return json.dumps(
         SmokeBallClient().get_folder_history(matter_id, limit=limit, offset=offset),
@@ -1495,7 +1679,7 @@ def patch_matter_archive(
 
 
 @mcp.tool()
-def list_referral_types(limit: int = 100, offset: int = 0) -> str:
+def list_referral_types(limit: ListLimit = 100, offset: ListOffset = 0) -> str:
     """List referral source types configured for this firm."""
     return json.dumps(
         SmokeBallClient().get_referral_types(limit=limit, offset=offset), indent=2
@@ -1624,6 +1808,9 @@ def get_plugin(plugin_id: str) -> str:
 @mcp.tool()
 def create_plugin(name: str, url: str, description: str = "") -> str:
     """Register a new plugin integration."""
+    from smokeball_mcp.client import _validate_webhook_url
+
+    _validate_webhook_url(url)
     fields = {"name": name, "url": url}
     if description:
         fields["description"] = description
@@ -1633,6 +1820,10 @@ def create_plugin(name: str, url: str, description: str = "") -> str:
 @mcp.tool()
 def update_plugin(plugin_id: str, name: str = "", url: str = "") -> str:
     """Update a plugin's details."""
+    from smokeball_mcp.client import _validate_webhook_url
+
+    if url:
+        _validate_webhook_url(url)
     fields = {}
     if name:
         fields["name"] = name
@@ -1705,8 +1896,11 @@ def create_portal_task(
 def update_portal_task(task_id: str, completed_str: str = "", title: str = "") -> str:
     """Update a client portal task status or title. completed_str: 'true' or 'false'."""
     fields = {}
-    if completed_str.lower() in ("true", "false"):
-        fields["completed"] = completed_str.lower() == "true"
+    completed = _parse_bool(
+        completed_str, tool="update_portal_task", field="completed_str"
+    )
+    if completed is not None:
+        fields["completed"] = completed
     if title:
         fields["title"] = title
     return json.dumps(SmokeBallClient().patch_portal_task(task_id, **fields), indent=2)
@@ -1844,8 +2038,14 @@ def get_webhook_subscription(subscription_id: str) -> str:
 
 
 @mcp.tool()
-def create_webhook_subscription(event_type: str, url: str, secret: str = "") -> str:
+# An empty default omits the signing secret; it is not a hardcoded credential.
+def create_webhook_subscription(  # nosec B107
+    event_type: str, url: str, secret: str = ""
+) -> str:
     """Create a webhook subscription. event_type: from list_webhook_event_types."""
+    from smokeball_mcp.client import _validate_webhook_url
+
+    _validate_webhook_url(url)
     fields = {}
     if secret:
         fields["secret"] = secret
@@ -1860,11 +2060,18 @@ def update_webhook_subscription(
     subscription_id: str, url: str = "", active: str = ""
 ) -> str:
     """Update a webhook subscription URL or active state. active: 'true' or 'false'."""
+    from smokeball_mcp.client import _validate_webhook_url
+
+    if url:
+        _validate_webhook_url(url)
     fields = {}
     if url:
         fields["url"] = url
-    if active.lower() in ("true", "false"):
-        fields["active"] = active.lower() == "true"
+    active_value = _parse_bool(
+        active, tool="update_webhook_subscription", field="active"
+    )
+    if active_value is not None:
+        fields["active"] = active_value
     return json.dumps(
         SmokeBallClient().update_webhook_subscription(subscription_id, **fields),
         indent=2,
