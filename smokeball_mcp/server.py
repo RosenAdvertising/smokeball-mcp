@@ -132,7 +132,7 @@ class SafeMCPServer(MCPServer):
 
 mcp = SafeMCPServer(
     "smokeball-mcp",
-    version="0.1.0",
+    version="0.2.0",
     instructions=(
         "Full access to Smokeball practice management: matters, contacts, leads, tasks, "
         "events, fees, expenses, invoices, files, folders, bank accounts, staff, plugins, "

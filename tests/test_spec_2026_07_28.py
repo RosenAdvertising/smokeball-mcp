@@ -121,7 +121,7 @@ def test_modern_discovery_is_sessionless_and_declares_identity() -> None:
     assert "extensions" not in result["capabilities"]
     assert result["_meta"][SERVER_INFO_META_KEY] == {
         "name": "smokeball-mcp",
-        "version": "0.1.0",
+        "version": "0.2.0",
     }
 
 
