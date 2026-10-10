@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Smokeball MCP Server — full Smokeball API coverage via MCPServer."""
 
+import asyncio
 import json
 import logging
+import os
+from importlib.metadata import version
 from typing import Annotated
 
 from mcp.server import MCPServer
@@ -13,7 +16,9 @@ from mcp.server.mcpserver.exceptions import (
     UnexpectedToolError,
 )
 from mcp.server.mcpserver.tools.base import Tool
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field, ValidationError
+from starlette.applications import Starlette
 
 from .client import (
     AccessDeniedError,
@@ -132,7 +137,8 @@ class SafeMCPServer(MCPServer):
 
 mcp = SafeMCPServer(
     "smokeball-mcp",
-    version="0.2.0",
+    title="Smokeball MCP",
+    version=version("smokeball-mcp"),
     instructions=(
         "Full access to Smokeball practice management: matters, contacts, leads, tasks, "
         "events, fees, expenses, invoices, files, folders, bank accounts, staff, plugins, "
@@ -2193,6 +2199,81 @@ Flag any discrepancies between fees recorded and invoices issued."""
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+STREAMABLE_HTTP_TRANSPORT = "streamable-http"
+
+
+def _requested_transport() -> str:
+    return os.environ.get("SMOKEBALL_MCP_TRANSPORT", "stdio").strip().lower() or "stdio"
+
+
+def _host() -> str:
+    return os.environ.get("SMOKEBALL_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+
+
+def _port() -> int:
+    raw = os.environ.get("PORT", "8080").strip()
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise SystemExit(f"PORT must be an integer, got {raw!r}") from exc
+
+
+def _transport_security() -> TransportSecuritySettings | None:
+    if _host() in ("127.0.0.1", "localhost", "::1"):
+        return None
+    allowed_hosts = [
+        host.strip()
+        for host in os.environ.get("SMOKEBALL_MCP_ALLOWED_HOSTS", "").split(",")
+        if host.strip()
+    ]
+    if not allowed_hosts:
+        raise SystemExit(
+            "SMOKEBALL_MCP_ALLOWED_HOSTS is required for a non-loopback SMOKEBALL_MCP_HOST."
+        )
+    allowed_origins = [
+        origin.strip()
+        for origin in os.environ.get("SMOKEBALL_MCP_ALLOWED_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+
+
+def create_serve_app() -> Starlette:
+    """Build the stateless MCP endpoint with SDK Host and Origin validation."""
+    return mcp.streamable_http_app(
+        streamable_http_path="/mcp",
+        host=_host(),
+        stateless_http=True,
+        transport_security=_transport_security(),
+    )
+
+
+async def _serve_streamable_http() -> None:
+    import uvicorn
+
+    config = uvicorn.Config(
+        create_serve_app(),
+        host=_host(),
+        port=_port(),
+        log_level=mcp.settings.log_level.lower(),
+        access_log=False,
+    )
+    await uvicorn.Server(config).serve()
+
 
 def main():
-    mcp.run()
+    transport = _requested_transport()
+    if transport == "stdio":
+        mcp.run()
+        return
+    if transport == STREAMABLE_HTTP_TRANSPORT:
+        asyncio.run(_serve_streamable_http())
+        return
+    raise SystemExit(
+        f"Unsupported SMOKEBALL_MCP_TRANSPORT {transport!r}; "
+        f"expected 'stdio' or '{STREAMABLE_HTTP_TRANSPORT}'."
+    )

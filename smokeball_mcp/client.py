@@ -10,6 +10,7 @@ import time
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 
 import requests
 
@@ -18,6 +19,7 @@ from smokeball_mcp.regions import region_config
 from smokeball_mcp.url_security import UnsafeURL, validate_public_https
 
 logger = logging.getLogger(__name__)
+_TOKEN_REFRESH_LOCK = Lock()
 
 
 def _path_id(value, parameter: str) -> str:
@@ -265,6 +267,17 @@ class TokenManager:
         return self.tokens.get("refresh_token", "")
 
     def refresh(self):
+        # HTTP tools run in worker threads with separate TokenManager instances.
+        # Serialize rotation and reuse tokens another request has already saved.
+        with _TOKEN_REFRESH_LOCK:
+            if getattr(self, "token_file", None) is not None:
+                latest = self._load()
+                if latest != self.tokens and latest.get("access_token"):
+                    self.tokens = latest
+                    return latest
+            return self._refresh()
+
+    def _refresh(self):
         if not self.refresh_token:
             logger.warning("credential_guard_rejected reason=missing_refresh_token")
             raise MissingCredentialsError("oauth_tokens")
