@@ -1,4 +1,4 @@
-"""Fleet canary regressions for list controls, rejection logs, and PII hygiene."""
+"""Regressions for list controls, rejection logs, and PII hygiene."""
 
 from __future__ import annotations
 
