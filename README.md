@@ -76,6 +76,8 @@ at `/mcp`. Each MCP 2026-07-28 request is a standalone POST; no initialization
 or session ID is needed. The SDK also supports older clients on this endpoint.
 Stdio remains the default.
 
+> **Security: this endpoint has no authentication and no TLS.** Anyone who can reach the port can run every tool, including write and delete tools, with this server's vendor credentials. Keep the default loopback bind (`127.0.0.1`), or put the server behind an authenticating TLS proxy on a private network. `SMOKEBALL_MCP_ALLOWED_HOSTS` and `SMOKEBALL_MCP_ALLOWED_ORIGINS` protect against browser DNS rebinding, not against direct callers. A proxy in front of it needs connection and idle timeouts: a legacy-style `GET /mcp` with `Accept: text/event-stream` holds a stream open until the client disconnects.
+
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `SMOKEBALL_MCP_TRANSPORT` | `stdio` | Select `stdio` or `streamable-http`. |

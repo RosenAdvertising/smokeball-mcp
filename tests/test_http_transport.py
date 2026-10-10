@@ -428,3 +428,51 @@ async def test_unknown_tool_remains_an_error_result():
             "result"
         ]
     assert result["isError"] is True
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_empty_transport_selects_stdio(monkeypatch, value):
+    monkeypatch.setenv("SMOKEBALL_MCP_TRANSPORT", value)
+    run = Mock()
+    monkeypatch.setattr(server.mcp, "run", run)
+    server.main()
+    run.assert_called_once_with()
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_empty_host_yields_loopback(monkeypatch, value):
+    monkeypatch.setenv("SMOKEBALL_MCP_HOST", value)
+    assert server._host() == "127.0.0.1"
+
+
+def test_uppercase_localhost_is_non_loopback(monkeypatch):
+    monkeypatch.setenv("SMOKEBALL_MCP_HOST", "LOCALHOST")
+    assert server._host() == "LOCALHOST"
+    with pytest.raises(SystemExit, match="SMOKEBALL_MCP_ALLOWED_HOSTS"):
+        server.create_serve_app()
+
+
+def test_server_import_without_installed_distribution():
+    import subprocess
+
+    probe = (
+        "import importlib.metadata\n"
+        "from unittest.mock import patch\n"
+        "real_version = importlib.metadata.version\n"
+        "def effect(name):\n"
+        "    if name == 'smokeball-mcp':\n"
+        "        raise importlib.metadata.PackageNotFoundError(name)\n"
+        "    return real_version(name)\n"
+        "with patch.object(importlib.metadata, 'version', side_effect=effect):\n"
+        "    import smokeball_mcp.server as reloaded\n"
+        "    assert reloaded.mcp is not None\n"
+        "print('import-ok')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "import-ok" in result.stdout

@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import os
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated
 
 from mcp.server import MCPServer
@@ -135,10 +135,21 @@ class SafeMCPServer(MCPServer):
             ) from None
 
 
+def _server_version() -> str:
+    try:
+        return version("smokeball-mcp")
+    except PackageNotFoundError:
+        try:
+            from smokeball_mcp import __version__ as pkg_version
+        except ImportError:
+            return "0.0.0+local"
+        return pkg_version
+
+
 mcp = SafeMCPServer(
     "smokeball-mcp",
     title="Smokeball MCP",
-    version=version("smokeball-mcp"),
+    version=_server_version(),
     instructions=(
         "Full access to Smokeball practice management: matters, contacts, leads, tasks, "
         "events, fees, expenses, invoices, files, folders, bank accounts, staff, plugins, "
